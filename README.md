@@ -47,6 +47,41 @@ Your GCP user needs, at minimum:
 - `roles/iap.tunnelResourceAccessor` — open IAP tunnels
 - `roles/compute.osLogin` (only if OS Login is enabled on the project)
 
+## Setting up a GCP project from scratch
+
+If you'd rather run codebox in its own project (easy to reuse an existing billing account
+and to delete cleanly afterwards), do this once. As the project's creator you're Owner, so
+you already have the IAM roles listed above.
+
+```bash
+# 0. Pick a globally-unique project id and a zone.
+export PROJECT_ID="codebox-<something-unique>"
+export ZONE="us-central1-a"
+
+# 1. Make sure you're authenticated.
+gcloud auth list                 # or: gcloud auth login
+
+# 2. Find the billing account id to reuse (looks like 0X0X0X-0X0X0X-0X0X0X).
+gcloud billing accounts list
+export BILLING_ACCOUNT="0X0X0X-0X0X0X-0X0X0X"
+
+# 3. Create the project and link billing.
+gcloud projects create "$PROJECT_ID" --name="codebox"
+gcloud billing projects link "$PROJECT_ID" --billing-account="$BILLING_ACCOUNT"
+
+# 4. Enable the required APIs (also provisions the default network + service account).
+gcloud services enable compute.googleapis.com iap.googleapis.com --project="$PROJECT_ID"
+```
+
+Give step 4 ~30 seconds to settle, then set `CODEBOX_PROJECT` (and `CODEBOX_ZONE`) in
+`codebox.env` and continue with Quick start below.
+
+Notes:
+- The **first** `gcloud compute ssh` (during `codebox create`) offers to generate an SSH
+  keypair — accept it and use an **empty passphrase** so the automated steps don't stall.
+- If `codebox create` errors immediately after enabling the APIs (network/service account
+  still provisioning), just re-run `codebox bootstrap` — it's idempotent.
+
 ## Quick start
 
 ```bash
@@ -137,6 +172,19 @@ for `CODEBOX_IDLE_TIMEOUT_MIN` minutes:
   build or a running Claude Code task even if your tunnel dropped.
 
 A stopped instance keeps its disk and everything on it; `codebox connect` brings it right back.
+
+## Teardown
+
+```bash
+codebox destroy                       # delete the VM; prompts about the firewall rules
+```
+
+If you created a throwaway project for this (see above), you can remove everything —
+instance, disk, firewall, and all — by deleting the project:
+
+```bash
+gcloud projects delete "$PROJECT_ID"
+```
 
 ## Security model / going public
 
