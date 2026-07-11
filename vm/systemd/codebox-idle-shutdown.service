@@ -1,0 +1,6 @@
+[Unit]
+Description=codebox idle-shutdown check
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/codebox-idle-shutdown

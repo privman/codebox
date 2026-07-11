@@ -1,0 +1,7 @@
+# Local configuration (holds your project id) — never commit.
+codebox.env
+
+# Editor / OS cruft
+.DS_Store
+*.log
+*.swp

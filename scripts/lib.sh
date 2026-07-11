@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Shared configuration and helpers for the codebox scripts.
+# Sourced by every script in this directory.
+set -euo pipefail
+
+CODEBOX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CODEBOX_ROOT="$(cd "${CODEBOX_SCRIPT_DIR}/.." && pwd)"
+
+# --- load config ---------------------------------------------------------
+# Priority: $CODEBOX_ENV, ./codebox.env, <repo>/codebox.env
+_codebox_load_env() {
+  local candidate
+  for candidate in "${CODEBOX_ENV:-}" "$PWD/codebox.env" "$CODEBOX_ROOT/codebox.env"; do
+    [ -n "$candidate" ] || continue
+    if [ -f "$candidate" ]; then
+      set -a
+      # shellcheck disable=SC1090
+      . "$candidate"
+      set +a
+      CODEBOX_ENV_FILE="$candidate"
+      return 0
+    fi
+  done
+  return 0
+}
+_codebox_load_env
+
+# --- defaults ------------------------------------------------------------
+: "${CODEBOX_ZONE:=us-central1-a}"
+: "${CODEBOX_INSTANCE:=codebox}"
+: "${CODEBOX_MACHINE_TYPE:=e2-standard-4}"
+: "${CODEBOX_DISK_SIZE:=50}"
+: "${CODEBOX_IMAGE_FAMILY:=debian-12}"
+: "${CODEBOX_IMAGE_PROJECT:=debian-cloud}"
+: "${CODEBOX_NETWORK_TAG:=codebox}"
+: "${CODEBOX_LOCAL_PORT:=8080}"
+: "${CODEBOX_REMOTE_PORT:=8080}"
+: "${CODEBOX_NODE_VERSION:=20}"
+: "${CODEBOX_IDLE_TIMEOUT_MIN:=30}"
+: "${CODEBOX_ALLOW_FIREWALL_RULE:=codebox-allow-iap-ssh}"
+: "${CODEBOX_DENY_FIREWALL_RULE:=codebox-deny-ssh}"
+
+# IAP's TCP-forwarding source range. Fixed by Google.
+CODEBOX_IAP_RANGE="35.235.240.0/20"
+
+# --- helpers -------------------------------------------------------------
+codebox_die()  { printf 'codebox: %s\n' "$*" >&2; exit 1; }
+codebox_info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
+codebox_warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
+
+codebox_check_gcloud() {
+  command -v gcloud >/dev/null 2>&1 || \
+    codebox_die "gcloud CLI not found. Install the Google Cloud SDK: https://cloud.google.com/sdk/docs/install"
+}
+
+codebox_require_project() {
+  if [ -z "${CODEBOX_PROJECT:-}" ]; then
+    CODEBOX_PROJECT="$(gcloud config get-value project 2>/dev/null || true)"
+  fi
+  [ -n "${CODEBOX_PROJECT:-}" ] || \
+    codebox_die "CODEBOX_PROJECT is not set. Edit codebox.env or run 'gcloud config set project <id>'."
+}
+
+# gcloud, always scoped to the configured project.
+codebox_gcloud() {
+  gcloud --project "$CODEBOX_PROJECT" "$@"
+}
+
+# Echo the instance status (RUNNING/TERMINATED/...) or empty if it doesn't exist.
+codebox_instance_status() {
+  codebox_gcloud compute instances describe "$CODEBOX_INSTANCE" \
+    --zone "$CODEBOX_ZONE" --format='value(status)' 2>/dev/null || true
+}
+
+# Wait until SSH-over-IAP succeeds (bootstrap after boot can take a moment).
+codebox_wait_for_ssh() {
+  local i
+  for i in $(seq 1 30); do
+    if codebox_gcloud compute ssh "$CODEBOX_INSTANCE" \
+         --zone "$CODEBOX_ZONE" --tunnel-through-iap \
+         --command="true" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 5
+  done
+  return 1
+}

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# codebox - manage a GCP dev VM for Claude Code + code-server.
+set -euo pipefail
+
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SELF/.." && pwd)"
+SCRIPTS="$ROOT/scripts"
+
+usage() {
+  cat <<'EOF'
+codebox - manage a GCP dev VM for Claude Code + code-server
+
+Usage: codebox <command>
+
+  create     Provision the VM + IAP firewall, then install the tooling
+  connect    Start the VM if needed and open the editor tunnel (localhost)
+  ssh        Open an interactive SSH shell (over IAP)
+  start      Start the (stopped) VM
+  stop       Stop the VM (halts compute billing)
+  status     Show instance status
+  bootstrap  Re-run the tooling install on an existing VM
+  destroy    Delete the VM (and optionally the firewall rules)
+
+Configuration lives in codebox.env (copy codebox.env.example).
+EOF
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  create)         exec bash "$SCRIPTS/create.sh" "$@" ;;
+  bootstrap)      exec bash "$SCRIPTS/bootstrap.sh" "$@" ;;
+  start)          exec bash "$SCRIPTS/start.sh" "$@" ;;
+  stop)           exec bash "$SCRIPTS/stop.sh" "$@" ;;
+  connect|code)   exec bash "$SCRIPTS/connect.sh" "$@" ;;
+  ssh)            exec bash "$SCRIPTS/ssh.sh" "$@" ;;
+  status)         exec bash "$SCRIPTS/status.sh" "$@" ;;
+  destroy)        exec bash "$SCRIPTS/destroy.sh" "$@" ;;
+  -h|--help|help) usage ;;
+  *) echo "codebox: unknown command '$cmd' (try 'codebox help')" >&2; exit 1 ;;
+esac
