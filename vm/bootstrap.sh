@@ -4,7 +4,7 @@
 # Idempotent: safe to re-run.
 set -euo pipefail
 
-NODE_VERSION="${CODEBOX_NODE_VERSION:-20}"
+NODE_VERSION="${CODEBOX_NODE_VERSION:-22}"
 REMOTE_PORT="${CODEBOX_REMOTE_PORT:-8080}"
 IDLE_TIMEOUT_MIN="${CODEBOX_IDLE_TIMEOUT_MIN:-30}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,8 +32,19 @@ log "Enabling corepack (pnpm/yarn) ..."
 sudo corepack enable || true
 
 # --- Claude Code ---------------------------------------------------------
-log "Installing/updating Claude Code ..."
-sudo npm install -g @anthropic-ai/claude-code
+# Native installer: a self-contained binary in ~/.local/bin that auto-updates
+# and does not depend on the system Node.js. Installed as the user (never sudo).
+if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ]; then
+  log "Installing Claude Code (native installer) ..."
+  curl -fsSL https://claude.ai/install.sh | bash
+else
+  log "Claude Code already installed (it auto-updates in the background)."
+fi
+# Make sure ~/.local/bin is on PATH for login shells and code-server terminals.
+if ! grep -qs '\.local/bin' "$HOME/.bashrc"; then
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+fi
+export PATH="$HOME/.local/bin:$PATH"
 
 # --- code-server ---------------------------------------------------------
 if ! command -v code-server >/dev/null 2>&1; then
