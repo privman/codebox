@@ -56,6 +56,22 @@ else
   log "Kept existing code-server config."
 fi
 
+log "Applying default editor settings ..."
+settings_dir="$HOME/.local/share/code-server/User"
+settings="$settings_dir/settings.json"
+mkdir -p "$settings_dir"
+[ -s "$settings" ] || echo '{}' > "$settings"
+# Set window.autoDetectColorScheme on by default, but don't clobber a value the
+# user has already chosen (keeps re-running bootstrap non-destructive).
+tmp="$(mktemp)"
+if jq 'if has("window.autoDetectColorScheme") then . else . + {"window.autoDetectColorScheme": true} end' \
+     "$settings" > "$tmp" 2>/dev/null; then
+  mv "$tmp" "$settings"
+else
+  rm -f "$tmp"
+  log "warning: could not parse $settings; leaving it untouched."
+fi
+
 log "Enabling code-server service ..."
 sudo systemctl enable --now "code-server@${USER}"
 

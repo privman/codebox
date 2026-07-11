@@ -150,7 +150,8 @@ All settings live in `codebox.env` (git-ignored). Copy `codebox.env.example` and
 - **Claude Code** (via the native installer into `~/.local/bin`; a self-contained binary
   that auto-updates and needs no language runtime)
 - **code-server**, bound to `127.0.0.1:<CODEBOX_REMOTE_PORT>` with a generated password,
-  running as a systemd service
+  running as a systemd service. Seeded with `window.autoDetectColorScheme: true` so the
+  editor follows your OS light/dark preference (you can override it in settings).
 - **git, ripgrep, jq, tmux, build-essential**
 - **codebox idle-shutdown** systemd timer
 
