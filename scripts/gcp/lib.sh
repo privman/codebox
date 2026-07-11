@@ -4,7 +4,8 @@
 set -euo pipefail
 
 CODEBOX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CODEBOX_ROOT="$(cd "${CODEBOX_SCRIPT_DIR}/.." && pwd)"
+# Repo root is two levels up: scripts/gcp/ -> scripts/ -> repo root.
+CODEBOX_ROOT="$(cd "${CODEBOX_SCRIPT_DIR}/../.." && pwd)"
 
 # --- load config ---------------------------------------------------------
 # Priority: $CODEBOX_ENV, ./codebox.env, <repo>/codebox.env

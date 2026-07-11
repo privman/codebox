@@ -4,18 +4,21 @@ Context for Claude Code when working in this repo.
 
 ## What this is
 
-`codebox` is a bash toolkit that provisions and manages a single GCP dev VM you connect to
+`codebox` is a bash toolkit that provisions and manages a single cloud dev VM you connect to
 from a laptop, running code-server (browser VS Code) and Claude Code. It is not an
-application — it's operational tooling. See `README.md` for the full model.
+application — it's operational tooling. GCP is the only provider implemented today; the CLI
+is structured so more can be added. See `README.md` for the full model.
 
 ## Layout
 
-- `bin/codebox` — CLI dispatcher; each subcommand execs a script in `scripts/`.
-- `scripts/lib.sh` — config loading (`codebox.env`), defaults, and gcloud helpers.
-  Every other script in `scripts/` sources it.
-- `scripts/*.sh` — laptop-side commands (create/start/stop/connect/ssh/status/bootstrap/destroy).
-- `vm/` — files copied to and executed **on the VM** (`bootstrap.sh`, `idle-shutdown.sh`,
-  `systemd/`).
+- `bin/codebox` — provider-agnostic CLI dispatcher. Parses a `--provider` flag (default
+  `gcp`, currently the only allowed value) and execs the matching script in
+  `scripts/<provider>/`.
+- `scripts/gcp/lib.sh` — config loading (`codebox.env`), defaults, and gcloud helpers.
+  Every other script in `scripts/gcp/` sources it.
+- `scripts/gcp/*.sh` — GCP-specific commands (create/start/stop/connect/ssh/status/bootstrap/destroy).
+- `vm/` — provider-agnostic files copied to and executed **on the VM** (`bootstrap.sh`,
+  `idle-shutdown.sh`, `systemd/`).
 
 ## Conventions
 

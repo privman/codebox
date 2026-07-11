@@ -1,42 +1,79 @@
 #!/usr/bin/env bash
-# codebox - manage a GCP dev VM for Claude Code + code-server.
+# codebox - manage a cloud dev VM for Claude Code + code-server.
 set -euo pipefail
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SELF/.." && pwd)"
-SCRIPTS="$ROOT/scripts"
+
+# Only GCP is implemented today; more providers may be added later.
+DEFAULT_PROVIDER="gcp"
+SUPPORTED_PROVIDERS="gcp"
 
 usage() {
   cat <<'EOF'
-codebox - manage a GCP dev VM for Claude Code + code-server
+codebox - manage a cloud dev VM for Claude Code + code-server
 
-Usage: codebox <command>
+Usage: codebox [--provider <name>] <command>
 
-  create     Provision the VM + IAP firewall, then install the tooling
+Commands:
+  create     Provision the VM + firewall, then install the tooling
   connect    Start the VM if needed and open the editor tunnel (localhost)
-  ssh        Open an interactive SSH shell (over IAP)
+  ssh        Open an interactive SSH shell
   start      Start the (stopped) VM
   stop       Stop the VM (halts compute billing)
   status     Show instance status
   bootstrap  Re-run the tooling install on an existing VM
   destroy    Delete the VM (and optionally the firewall rules)
 
+Options:
+  --provider <name>   Cloud provider to target. Default: gcp
+                      (gcp is currently the only supported value)
+
 Configuration lives in codebox.env (copy codebox.env.example).
 EOF
 }
+
+# --- parse a global --provider flag from anywhere in the args ------------
+provider="$DEFAULT_PROVIDER"
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --provider)
+      [ $# -ge 2 ] || { echo "codebox: --provider requires a value" >&2; exit 1; }
+      provider="$2"; shift 2 ;;
+    --provider=*)
+      provider="${1#--provider=}"; shift ;;
+    *)
+      args+=("$1"); shift ;;
+  esac
+done
+set -- ${args[@]+"${args[@]}"}
 
 cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
-  create)         exec bash "$SCRIPTS/create.sh" "$@" ;;
-  bootstrap)      exec bash "$SCRIPTS/bootstrap.sh" "$@" ;;
-  start)          exec bash "$SCRIPTS/start.sh" "$@" ;;
-  stop)           exec bash "$SCRIPTS/stop.sh" "$@" ;;
-  connect|code)   exec bash "$SCRIPTS/connect.sh" "$@" ;;
-  ssh)            exec bash "$SCRIPTS/ssh.sh" "$@" ;;
-  status)         exec bash "$SCRIPTS/status.sh" "$@" ;;
-  destroy)        exec bash "$SCRIPTS/destroy.sh" "$@" ;;
-  -h|--help|help) usage ;;
-  *) echo "codebox: unknown command '$cmd' (try 'codebox help')" >&2; exit 1 ;;
+  -h|--help|help) usage; exit 0 ;;
+esac
+
+# --- validate provider ---------------------------------------------------
+is_supported=0
+for p in $SUPPORTED_PROVIDERS; do
+  [ "$provider" = "$p" ] && is_supported=1
+done
+if [ "$is_supported" -ne 1 ]; then
+  echo "codebox: provider '$provider' is not implemented yet (supported: $SUPPORTED_PROVIDERS)" >&2
+  exit 1
+fi
+
+PROVIDER_DIR="$ROOT/scripts/$provider"
+[ -d "$PROVIDER_DIR" ] || { echo "codebox: no scripts found for provider '$provider'" >&2; exit 1; }
+
+case "$cmd" in
+  create|bootstrap|start|stop|ssh|status|destroy)
+    exec bash "$PROVIDER_DIR/$cmd.sh" "$@" ;;
+  connect|code)
+    exec bash "$PROVIDER_DIR/connect.sh" "$@" ;;
+  *)
+    echo "codebox: unknown command '$cmd' (try 'codebox help')" >&2; exit 1 ;;
 esac

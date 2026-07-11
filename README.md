@@ -1,8 +1,12 @@
 # codebox
 
-A small, self-contained toolkit for running a **cloud dev box on Google Cloud** that
-you drive from your laptop with [code-server](https://github.com/coder/code-server)
-(VS Code in the browser) and [Claude Code](https://claude.com/claude-code).
+A small, self-contained toolkit for running a **cloud dev box** that you drive from your
+laptop with [code-server](https://github.com/coder/code-server) (VS Code in the browser)
+and [Claude Code](https://claude.com/claude-code).
+
+> **Providers:** Google Cloud (GCP) is the only supported provider **at the moment**.
+> The CLI takes a `--provider` flag (default `gcp`) so additional providers can be added
+> later; passing anything other than `gcp` errors out as unimplemented for now.
 
 You provision a VM once, connect to it over an **IAP-tunneled SSH port-forward**, and
 edit/build inside the browser. The VM **stops itself when idle** so you only pay for
@@ -77,6 +81,17 @@ connection and low CPU.
 | `codebox status`    | Show the instance status                                           |
 | `codebox bootstrap` | Re-run the tooling install on an existing VM                       |
 | `codebox destroy`   | Delete the VM (and optionally the firewall rules)                  |
+
+Every command accepts an optional `--provider <name>` flag (default `gcp`). Only `gcp` is
+implemented right now; other values are rejected as unimplemented.
+
+## Repository layout
+
+- `bin/codebox` — provider-agnostic CLI; parses `--provider` and dispatches to a provider's scripts.
+- `scripts/gcp/` — all GCP-specific logic (gcloud provisioning, IAP tunnel, firewall).
+  A future provider would live alongside as `scripts/<provider>/`.
+- `vm/` — provider-agnostic files installed on the VM (Node.js, code-server, Claude Code,
+  the idle-shutdown timer).
 
 ## Configuration
 
