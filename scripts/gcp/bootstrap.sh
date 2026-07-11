@@ -24,8 +24,8 @@ codebox_gcloud compute ssh "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" --tunnel-t
 codebox_gcloud compute scp --recurse "$CODEBOX_ROOT/vm" "$CODEBOX_INSTANCE:~/vm" \
   --zone "$CODEBOX_ZONE" --tunnel-through-iap
 
-codebox_info "Running on-VM bootstrap (Node, code-server, Claude Code, idle-shutdown) ..."
+codebox_info "Running on-VM bootstrap (code-server, Claude Code, idle-shutdown) ..."
 codebox_gcloud compute ssh "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" --tunnel-through-iap \
-  --command="CODEBOX_NODE_VERSION='${CODEBOX_NODE_VERSION}' CODEBOX_REMOTE_PORT='${CODEBOX_REMOTE_PORT}' CODEBOX_IDLE_TIMEOUT_MIN='${CODEBOX_IDLE_TIMEOUT_MIN}' bash ~/vm/bootstrap.sh"
+  --command="CODEBOX_REMOTE_PORT='${CODEBOX_REMOTE_PORT}' CODEBOX_IDLE_TIMEOUT_MIN='${CODEBOX_IDLE_TIMEOUT_MIN}' bash ~/vm/bootstrap.sh"
 
 codebox_info "Done. Run 'codebox connect' to open the editor."

@@ -37,7 +37,7 @@ fi
 # --- instance ------------------------------------------------------------
 # The VM keeps an ephemeral external IP purely for outbound package installs.
 # For a no-external-IP setup, add `--no-address` below and provision a Cloud NAT
-# in the zone's region so apt/npm can still reach the internet, e.g.:
+# in the zone's region so apt can still reach the internet, e.g.:
 #   region="${CODEBOX_ZONE%-*}"
 #   gcloud compute routers create codebox-router --network=default --region="$region"
 #   gcloud compute routers nats create codebox-nat --router=codebox-router \

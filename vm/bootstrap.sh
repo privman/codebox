@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Runs ON the VM (as the login user, which has passwordless sudo on GCP images).
-# Installs Node.js, Claude Code, code-server, and the idle-shutdown timer.
+# Installs Claude Code, code-server, and the idle-shutdown timer.
 # Idempotent: safe to re-run.
 set -euo pipefail
 
-NODE_VERSION="${CODEBOX_NODE_VERSION:-22}"
 REMOTE_PORT="${CODEBOX_REMOTE_PORT:-8080}"
 IDLE_TIMEOUT_MIN="${CODEBOX_IDLE_TIMEOUT_MIN:-30}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,23 +16,9 @@ sudo apt-get update -y
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   curl git build-essential ca-certificates gnupg ripgrep jq tmux
 
-# --- Node.js -------------------------------------------------------------
-need_node=1
-if command -v node >/dev/null 2>&1; then
-  cur="$(node -v | sed 's/^v//' | cut -d. -f1)"
-  [ "$cur" -ge "$NODE_VERSION" ] && need_node=0
-fi
-if [ "$need_node" -eq 1 ]; then
-  log "Installing Node.js ${NODE_VERSION} ..."
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_VERSION}.x" | sudo -E bash -
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
-fi
-log "Enabling corepack (pnpm/yarn) ..."
-sudo corepack enable || true
-
 # --- Claude Code ---------------------------------------------------------
 # Native installer: a self-contained binary in ~/.local/bin that auto-updates
-# and does not depend on the system Node.js. Installed as the user (never sudo).
+# with no language-runtime dependency. Installed as the user (never sudo).
 if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ]; then
   log "Installing Claude Code (native installer) ..."
   curl -fsSL https://claude.ai/install.sh | bash
@@ -94,6 +79,5 @@ else
 fi
 
 log "Bootstrap complete."
-log "Node:        $(node -v 2>/dev/null || echo missing)"
 log "Claude Code: $(claude --version 2>/dev/null || echo 'installed (run \"claude\" to sign in)')"
 log "code-server: $(code-server --version 2>/dev/null | head -1 || echo missing)"

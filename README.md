@@ -14,7 +14,7 @@ compute while you're actually using it, and you resume it with a single command.
 
 ```
 laptop  ──IAP TCP tunnel──▶  sshd (:22, IAP range only)  ──local forward──▶  code-server (127.0.0.1:8080)
-                                                                              claude, node, git, ...
+                                                                              claude, git, python3, ...
 ```
 
 ## Why this shape
@@ -125,7 +125,7 @@ implemented right now; other values are rejected as unimplemented.
 - `bin/codebox` — provider-agnostic CLI; parses `--provider` and dispatches to a provider's scripts.
 - `scripts/gcp/` — all GCP-specific logic (gcloud provisioning, IAP tunnel, firewall).
   A future provider would live alongside as `scripts/<provider>/`.
-- `vm/` — provider-agnostic files installed on the VM (Node.js, code-server, Claude Code,
+- `vm/` — provider-agnostic files installed on the VM (code-server, Claude Code,
   the idle-shutdown timer).
 
 ## Configuration
@@ -141,20 +141,21 @@ All settings live in `codebox.env` (git-ignored). Copy `codebox.env.example` and
 | `CODEBOX_DISK_SIZE`       | `50`             | Boot disk size in GB                                |
 | `CODEBOX_IMAGE_FAMILY`    | `debian-12`      | OS image family                                     |
 | `CODEBOX_IMAGE_PROJECT`   | `debian-cloud`   | OS image project                                    |
-| `CODEBOX_NODE_VERSION`    | `22`             | Node.js major version (for your projects)           |
 | `CODEBOX_LOCAL_PORT`      | `8080`           | Port on your laptop for the editor                  |
 | `CODEBOX_REMOTE_PORT`     | `8080`           | Port code-server binds to on the VM (localhost)     |
 | `CODEBOX_IDLE_TIMEOUT_MIN`| `30`             | Idle minutes before auto-stop (`0` disables)        |
 
 ## What gets installed on the VM
 
-- **Node.js** (via NodeSource) + `corepack` (pnpm/yarn) — for your projects
 - **Claude Code** (via the native installer into `~/.local/bin`; a self-contained binary
-  that auto-updates and doesn't depend on the system Node.js)
+  that auto-updates and needs no language runtime)
 - **code-server**, bound to `127.0.0.1:<CODEBOX_REMOTE_PORT>` with a generated password,
   running as a systemd service
 - **git, ripgrep, jq, tmux, build-essential**
 - **codebox idle-shutdown** systemd timer
+
+No language runtime is installed by default. Debian 12 already ships Python 3, which covers
+Python projects; install anything else you need per project (or extend `vm/bootstrap.sh`).
 
 ### Signing in to Claude Code
 
