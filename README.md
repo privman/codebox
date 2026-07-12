@@ -172,6 +172,31 @@ each VM generates its own code-server password. Per-instance config files match 
 `codebox*.env` entry in `.gitignore`, so they won't be committed (only `codebox.env.example`
 is tracked).
 
+## Accessing a dev server running in the box
+
+A web server you run inside the VM (say on port 8000) is reachable through code-server's
+built-in proxy at `http://localhost:8080/proxy/8000/`. That works until the served pages emit
+absolute (`http://localhost:8000/...`) or root-relative (`/...`) links, which then resolve
+outside the `/proxy/8000/` prefix and 404. Two ways to fix it:
+
+- **Forward the port directly** — simplest, no auth, and handles WebSockets. In a second terminal:
+  ```bash
+  codebox ssh -- -N -L 8000:localhost:8000
+  ```
+  Then browse `http://localhost:8000/`; the app's own links resolve natively.
+
+- **`bin/codebox-webproxy`** — a laptop-side proxy that reuses your existing editor tunnel
+  instead of opening a second one. It listens on `localhost:8000` and forwards each request to
+  `http://localhost:8080/proxy/8000/<path>`, so absolute *and* root-relative links resolve
+  back through it:
+  ```bash
+  codebox-webproxy --password '<code-server password>'
+  ```
+  code-server's `/proxy` route requires auth, so pass `--password` (the proxy logs in and
+  reuses the session cookie) or `--cookie`. Configurable via flags/env — `--listen-port`,
+  `--remote-port`, `--code-server`, `--password`/`--cookie`. HTTP(S) only; it does not proxy
+  WebSocket upgrades (use the direct port-forward for WS apps).
+
 ## What gets installed on the VM
 
 - **Claude Code** (via the native installer into `~/.local/bin`; a self-contained binary
