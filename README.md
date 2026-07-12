@@ -143,6 +143,7 @@ All settings live in `codebox.env` (git-ignored). Copy `codebox.env.example` and
 | `CODEBOX_IMAGE_PROJECT`   | `debian-cloud`   | OS image project                                    |
 | `CODEBOX_LOCAL_PORT`      | `8080`           | Port on your laptop for the editor                  |
 | `CODEBOX_REMOTE_PORT`     | `8080`           | Port code-server binds to on the VM (localhost)     |
+| `CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS` | *(empty)* | Comma-separated extra ports to forward on `connect` (same port local + VM) |
 | `CODEBOX_IDLE_TIMEOUT_MIN`| `30`             | Idle minutes before auto-stop (`0` disables)        |
 
 ## Running multiple codeboxes
@@ -174,28 +175,28 @@ is tracked).
 
 ## Accessing a dev server running in the box
 
-A web server you run inside the VM (say on port 8000) is reachable through code-server's
-built-in proxy at `http://localhost:8080/proxy/8000/`. That works until the served pages emit
-absolute (`http://localhost:8000/...`) or root-relative (`/...`) links, which then resolve
-outside the `/proxy/8000/` prefix and 404. Two ways to fix it:
+Run a dev server inside the VM (say on port 8000) and forward its port to your laptop so it's
+reachable at the same `localhost:8000`. Because the port matches, the app's own links —
+absolute (`http://localhost:8000/...`) or root-relative (`/...`) — resolve natively, with no
+proxy or URL rewriting.
 
-- **Forward the port directly** — simplest, no auth, and handles WebSockets. In a second terminal:
-  ```bash
-  codebox ssh -- -N -L 8000:localhost:8000
-  ```
-  Then browse `http://localhost:8000/`; the app's own links resolve natively.
+List the port(s) in `codebox.env` and `codebox connect` forwards them alongside the editor:
 
-- **`bin/codebox-webproxy`** — a laptop-side proxy that reuses your existing editor tunnel
-  instead of opening a second one. It listens on `localhost:8000` and forwards each request to
-  `http://localhost:8080/proxy/8000/<path>`, so absolute *and* root-relative links resolve
-  back through it:
-  ```bash
-  codebox-webproxy --password '<code-server password>'
-  ```
-  code-server's `/proxy` route requires auth, so pass `--password` (the proxy logs in and
-  reuses the session cookie) or `--cookie`. Configurable via flags/env — `--listen-port`,
-  `--remote-port`, `--code-server`, `--password`/`--cookie`. HTTP(S) only; it does not proxy
-  WebSocket upgrades (use the direct port-forward for WS apps).
+```bash
+# in codebox.env
+CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS="8000,5173"
+```
+
+```bash
+codebox connect      # forwards the editor + localhost:8000 and localhost:5173
+```
+
+Each extra port uses the same number locally and on the VM. For a one-off port you'd rather
+not keep in the config, open a separate forward instead:
+
+```bash
+codebox ssh -- -N -L 8000:localhost:8000
+```
 
 ## What gets installed on the VM
 

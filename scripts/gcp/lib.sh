@@ -36,6 +36,7 @@ _codebox_load_env
 : "${CODEBOX_NETWORK_TAG:=codebox}"
 : "${CODEBOX_LOCAL_PORT:=8080}"
 : "${CODEBOX_REMOTE_PORT:=8080}"
+: "${CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS:=}"
 : "${CODEBOX_IDLE_TIMEOUT_MIN:=30}"
 : "${CODEBOX_ALLOW_FIREWALL_RULE:=codebox-allow-iap-ssh}"
 : "${CODEBOX_DENY_FIREWALL_RULE:=codebox-deny-ssh}"
