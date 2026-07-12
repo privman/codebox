@@ -145,6 +145,33 @@ All settings live in `codebox.env` (git-ignored). Copy `codebox.env.example` and
 | `CODEBOX_REMOTE_PORT`     | `8080`           | Port code-server binds to on the VM (localhost)     |
 | `CODEBOX_IDLE_TIMEOUT_MIN`| `30`             | Idle minutes before auto-stop (`0` disables)        |
 
+## Running multiple codeboxes
+
+You can run several independent VMs for the same project from the same directory — each box
+is just a separate config file. `codebox` resolves its config in this order (first match
+wins): `$CODEBOX_ENV`, then `./codebox.env`, then `<repo>/codebox.env`. So point
+`CODEBOX_ENV` at a per-instance file:
+
+```bash
+cp codebox.env codebox-b.env
+$EDITOR codebox-b.env          # give it a unique CODEBOX_INSTANCE (and CODEBOX_LOCAL_PORT)
+
+CODEBOX_ENV=codebox-b.env codebox create
+CODEBOX_ENV=codebox-b.env codebox connect
+```
+
+Two values must differ per box:
+
+- **`CODEBOX_INSTANCE`** — a unique VM name, or the second `codebox create` collides with the first.
+- **`CODEBOX_LOCAL_PORT`** — only needed if you want both editor tunnels open *at the same
+  time* (two `connect`s would otherwise both try to bind `localhost:8080`). The **remote**
+  port can stay the same — the VMs are different machines.
+
+Everything else just works: the IAP firewall rules are shared and created idempotently, and
+each VM generates its own code-server password. Per-instance config files match the
+`codebox*.env` entry in `.gitignore`, so they won't be committed (only `codebox.env.example`
+is tracked).
+
 ## What gets installed on the VM
 
 - **Claude Code** (via the native installer into `~/.local/bin`; a self-contained binary
