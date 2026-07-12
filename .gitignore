@@ -1,5 +1,10 @@
 # Local configuration (holds your project id) — never commit.
-codebox.env
+# Glob covers per-instance configs (codebox-b.env, codebox-staging.env, ...);
+# codebox.env.example ends in .example, so it stays tracked.
+codebox*.env
+
+# Local read-only clone of upstream code-server (for source reference; not part of codebox)
+/vendor/
 
 # Editor / OS cruft
 .DS_Store
