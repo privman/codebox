@@ -143,7 +143,7 @@ All settings live in `codebox.env` (git-ignored). Copy `codebox.env.example` and
 | `CODEBOX_IMAGE_PROJECT`   | `debian-cloud`   | OS image project                                    |
 | `CODEBOX_LOCAL_PORT`      | `8080`           | Port on your laptop for the editor                  |
 | `CODEBOX_REMOTE_PORT`     | `8080`           | Port code-server binds to on the VM (localhost)     |
-| `CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS` | *(empty)* | Comma-separated extra ports to forward on `connect` (same port local + VM) |
+| `CODEBOX_ADDITIONAL_PORTS` | *(empty)* | Comma-separated extra ports to forward on `connect` (same port local + VM) |
 | `CODEBOX_IDLE_TIMEOUT_MIN`| `30`             | Idle minutes before auto-stop (`0` disables)        |
 
 ## Running multiple codeboxes
@@ -184,7 +184,7 @@ List the port(s) in `codebox.env` and `codebox connect` forwards them alongside 
 
 ```bash
 # in codebox.env
-CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS="8000,5173"
+CODEBOX_ADDITIONAL_PORTS="8000,5173"
 ```
 
 ```bash

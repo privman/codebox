@@ -36,7 +36,7 @@ _codebox_load_env
 : "${CODEBOX_NETWORK_TAG:=codebox}"
 : "${CODEBOX_LOCAL_PORT:=8080}"
 : "${CODEBOX_REMOTE_PORT:=8080}"
-: "${CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS:=}"
+: "${CODEBOX_ADDITIONAL_PORTS:=}"
 : "${CODEBOX_IDLE_TIMEOUT_MIN:=30}"
 : "${CODEBOX_ALLOW_FIREWALL_RULE:=codebox-allow-iap-ssh}"
 : "${CODEBOX_DENY_FIREWALL_RULE:=codebox-deny-ssh}"
@@ -67,10 +67,25 @@ codebox_gcloud() {
   gcloud --project "$CODEBOX_PROJECT" "$@"
 }
 
-# Echo the instance status (RUNNING/TERMINATED/...) or empty if it doesn't exist.
+# Echo the instance status (RUNNING/TERMINATED/...), or empty if the instance does not
+# exist. Returns non-zero (after an explanatory message) when the *lookup itself* fails —
+# e.g. no network or expired credentials — so a transient error is never misreported as
+# "instance not found". We use `list` rather than `describe` on purpose: `list` exits 0
+# with empty output for an absent instance and non-zero only on real errors, whereas
+# `describe` exits non-zero for both, making the two indistinguishable.
 codebox_instance_status() {
-  codebox_gcloud compute instances describe "$CODEBOX_INSTANCE" \
-    --zone "$CODEBOX_ZONE" --format='value(status)' 2>/dev/null || true
+  local out
+  if out="$(codebox_gcloud compute instances list \
+        --zones "$CODEBOX_ZONE" \
+        --filter="name=${CODEBOX_INSTANCE}" \
+        --format='value(status)')"; then
+    printf '%s' "$out"
+    return 0
+  fi
+  codebox_warn "could not query GCP for instance '$CODEBOX_INSTANCE' (project '$CODEBOX_PROJECT', zone '$CODEBOX_ZONE')."
+  codebox_warn "This is usually a connectivity or credentials problem, not a missing VM (see the gcloud error above)."
+  codebox_warn "Fix that and retry — do NOT run 'codebox create', which would try to make a second instance."
+  return 1
 }
 
 # Wait until SSH-over-IAP succeeds (bootstrap after boot can take a moment).

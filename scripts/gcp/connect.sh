@@ -32,17 +32,17 @@ cat >&2 <<EOF
 EOF
 
 # Build the SSH port-forward flags: the editor port first, then any extra dev-server
-# ports from CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS. Extras use the same port number both
+# ports from CODEBOX_ADDITIONAL_PORTS. Extras use the same port number both
 # locally and on the VM (unlike the editor's separate local/remote ports).
 forward_args=(-N -L "${CODEBOX_LOCAL_PORT}:localhost:${CODEBOX_REMOTE_PORT}")
 extra_desc=""
-if [ -n "${CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS:-}" ]; then
-  IFS=',' read -ra _ports <<< "$CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS"
+if [ -n "${CODEBOX_ADDITIONAL_PORTS:-}" ]; then
+  IFS=',' read -ra _ports <<< "$CODEBOX_ADDITIONAL_PORTS"
   for _p in "${_ports[@]}"; do
     _p="${_p//[[:space:]]/}"
     [ -n "$_p" ] || continue
     case "$_p" in
-      *[!0-9]*) codebox_die "CODEBOX_ADDITIONAL_TUNNEL_ON_PORTS has a non-numeric port: '$_p'" ;;
+      *[!0-9]*) codebox_die "CODEBOX_ADDITIONAL_PORTS has a non-numeric port: '$_p'" ;;
     esac
     forward_args+=(-L "${_p}:localhost:${_p}")
     extra_desc="${extra_desc} ${_p}"
