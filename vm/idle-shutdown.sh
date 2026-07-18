@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Runs as root from a systemd timer. Powers the machine off after a sustained
-# idle period so a stopped GCP instance stops accruing compute charges.
+# Runs as root from a systemd timer. Suspends the VM after a sustained idle period
+# instead of stopping it: RAM is frozen to disk, so running processes (dev servers,
+# Claude Code, …) are restored intact on the next resume. Suspend is triggered by
+# calling the Compute API on this instance itself, authenticated with the metadata
+# service-account token (requires the compute scope + compute.instances.suspend).
 #
 # "Idle" means, for IDLE_TIMEOUT_MIN consecutive minutes, ALL of:
 #   - no established SSH connection (no codebox tunnel open),
@@ -52,7 +55,34 @@ fi
 
 idle_since="$(cat "$STATE")"
 elapsed_min=$(( (now - idle_since) / 60 ))
-if [ "$elapsed_min" -ge "$IDLE_TIMEOUT_MIN" ]; then
-  logger -t codebox-idle "idle for ${elapsed_min} min (>= ${IDLE_TIMEOUT_MIN}); shutting down"
-  /sbin/shutdown -h now "codebox: idle shutdown"
+if [ "$elapsed_min" -lt "$IDLE_TIMEOUT_MIN" ]; then
+  exit 0
+fi
+
+logger -t codebox-idle "idle for ${elapsed_min} min (>= ${IDLE_TIMEOUT_MIN}); requesting self-suspend"
+
+# Reset the countdown BEFORE suspending. On resume this file is gone, so the idle
+# timer starts a fresh 30-min count instead of immediately re-suspending; and if the
+# suspend call fails, the next attempt is a clean cycle rather than a tight retry loop.
+rm -f "$STATE"
+
+md="http://metadata.google.internal/computeMetadata/v1"
+hdr="Metadata-Flavor: Google"
+token="$(curl -s -H "$hdr" "$md/instance/service-accounts/default/token" \
+           | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])' 2>/dev/null || true)"
+project="$(curl -s -H "$hdr" "$md/project/project-id" 2>/dev/null || true)"
+zone="$(curl -s -H "$hdr" "$md/instance/zone" 2>/dev/null | awk -F/ '{print $NF}')"
+name="$(curl -s -H "$hdr" "$md/instance/name" 2>/dev/null || true)"
+
+if [ -z "$token" ] || [ -z "$project" ] || [ -z "$zone" ] || [ -z "$name" ]; then
+  logger -t codebox-idle "could not read metadata/token; not suspending (will retry next cycle)"
+  exit 0
+fi
+
+code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $token" \
+          "https://compute.googleapis.com/compute/v1/projects/${project}/zones/${zone}/instances/${name}/suspend" || true)"
+if [ "$code" = "200" ]; then
+  logger -t codebox-idle "self-suspend request accepted (HTTP 200)"
+else
+  logger -t codebox-idle "self-suspend request failed (HTTP ${code:-none}); staying up, will retry"
 fi

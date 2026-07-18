@@ -9,8 +9,9 @@ and [Claude Code](https://claude.com/claude-code).
 > later; passing anything other than `gcp` errors out as unimplemented for now.
 
 You provision a VM once, connect to it over an **IAP-tunneled SSH port-forward**, and
-edit/build inside the browser. The VM **stops itself when idle** so you only pay for
-compute while you're actually using it, and you resume it with a single command.
+edit/build inside the browser. The VM **suspends itself when idle** — freezing memory to
+disk so your running processes survive — so you only pay for compute while you're actually
+using it, and you pick up exactly where you left off with a single command.
 
 ```
 laptop  ──IAP TCP tunnel──▶  sshd (:22, IAP range only)  ──local forward──▶  code-server (127.0.0.1:8080)
@@ -23,9 +24,11 @@ laptop  ──IAP TCP tunnel──▶  sshd (:22, IAP range only)  ──local f
   You reach it by forwarding a local port through an SSH session that itself runs over
   Google's [Identity-Aware Proxy](https://cloud.google.com/iap) TCP tunnel. Nothing but
   SSH is reachable, and SSH is locked to the IAP source range.
-- **Cheap when idle.** A systemd timer shuts the guest OS down after a configurable
-  idle period. A stopped GCP instance bills only for its disk, not CPU/RAM.
-- **One command to come back.** `codebox connect` starts the VM if needed and opens the tunnel.
+- **Cheap when idle, without losing your work.** A systemd timer **suspends** the VM after a
+  configurable idle period — RAM is frozen to disk, so dev servers and Claude Code sessions
+  are restored intact on resume. A suspended instance bills for its disk plus the saved memory,
+  not for CPU/RAM.
+- **One command to come back.** `codebox connect` resumes (or starts) the VM if needed and opens the tunnel.
 
 ## Prerequisites
 
@@ -128,7 +131,7 @@ implemented right now; other values are rejected as unimplemented.
 - `scripts/gcp/` — all GCP-specific logic (gcloud provisioning, IAP tunnel, firewall).
   A future provider would live alongside as `scripts/<provider>/`.
 - `vm/` — provider-agnostic files installed on the VM (code-server, Claude Code,
-  the idle-shutdown timer).
+  the idle auto-suspend timer).
 
 ## Configuration
 
@@ -146,7 +149,7 @@ All settings live in `codebox.env` (git-ignored). Copy `codebox.env.example` and
 | `CODEBOX_LOCAL_PORT`      | `8080`           | Port on your laptop for the editor                  |
 | `CODEBOX_REMOTE_PORT`     | `8080`           | Port code-server binds to on the VM (localhost)     |
 | `CODEBOX_ADDITIONAL_PORTS` | *(empty)* | Comma-separated extra ports to forward on `connect` (same port local + VM) |
-| `CODEBOX_IDLE_TIMEOUT_MIN`| `30`             | Idle minutes before auto-stop (`0` disables)        |
+| `CODEBOX_IDLE_TIMEOUT_MIN`| `30`             | Idle minutes before auto-suspend (`0` disables)     |
 
 ## Running multiple codeboxes
 
@@ -208,7 +211,7 @@ codebox ssh -- -N -L 8000:localhost:8000
   running as a systemd service. Seeded with `window.autoDetectColorScheme: true` so the
   editor follows your OS light/dark preference (you can override it in settings).
 - **git, ripgrep, jq, tmux, build-essential**
-- **codebox idle-shutdown** systemd timer
+- **codebox idle auto-suspend** systemd timer
 
 No language runtime is installed by default. Debian 12 already ships Python 3, which covers
 Python projects; install anything else you need per project (or extend `vm/bootstrap.sh`).
@@ -219,9 +222,9 @@ Claude Code is installed but **not** authenticated — no credentials are baked 
 repo or the image. In an editor terminal (or `codebox ssh`), run `claude` once and follow
 the login prompt. Your credentials stay on the VM's disk.
 
-## Auto-stop on idle
+## Auto-suspend on idle
 
-A systemd timer runs every 5 minutes and shuts the machine down once **all** of these hold
+A systemd timer runs every 5 minutes and **suspends** the VM once **all** of these hold
 for `CODEBOX_IDLE_TIMEOUT_MIN` minutes:
 
 - no established SSH connection (i.e. no `codebox connect`/`ssh` tunnel open),
@@ -229,7 +232,13 @@ for `CODEBOX_IDLE_TIMEOUT_MIN` minutes:
 - 1-minute load average below `LOAD_THRESHOLD` (default `0.4`) — this protects a long
   build or a running Claude Code task even if your tunnel dropped.
 
-A stopped instance keeps its disk and everything on it; `codebox connect` brings it right back.
+Suspend freezes RAM to disk, so on the next `codebox connect` the VM **resumes** with your
+processes still running — dev servers, Claude Code sessions, shells — right where you left them.
+The VM triggers this on itself via the Compute API (using its metadata service-account token),
+which is why the instance is created with the `compute` scope; the service account needs
+`compute.instances.suspend` (the default Compute Engine SA has it). If the suspend call ever
+fails it just stays up and retries next cycle — there is intentionally no fallback to a full
+stop. Set `CODEBOX_IDLE_TIMEOUT_MIN=0` to disable auto-suspend entirely.
 
 ## Teardown
 

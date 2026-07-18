@@ -42,6 +42,16 @@ fi
 #   gcloud compute routers create codebox-router --network=default --region="$region"
 #   gcloud compute routers nats create codebox-nat --router=codebox-router \
 #       --region="$region" --auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges
+# --scopes=compute lets the VM call the Compute API on itself so the idle timer can
+# suspend the instance (freezing RAM) instead of stopping it. The instance's service
+# account also needs the `compute.instances.suspend` permission — the default Compute
+# Engine service account has it via its default Editor role. If your org strips that
+# default grant, bind a minimal custom role to the SA, e.g.:
+#   gcloud iam roles create codeboxSelfSuspend --project="$CODEBOX_PROJECT" \
+#       --permissions=compute.instances.suspend
+#   gcloud projects add-iam-policy-binding "$CODEBOX_PROJECT" \
+#       --member="serviceAccount:<vm-service-account>" \
+#       --role="projects/$CODEBOX_PROJECT/roles/codeboxSelfSuspend"
 codebox_info "Creating instance '$CODEBOX_INSTANCE' ($CODEBOX_MACHINE_TYPE, $CODEBOX_IMAGE_FAMILY) in $CODEBOX_ZONE ..."
 codebox_gcloud compute instances create "$CODEBOX_INSTANCE" \
   --zone="$CODEBOX_ZONE" \
@@ -51,6 +61,7 @@ codebox_gcloud compute instances create "$CODEBOX_INSTANCE" \
   --boot-disk-size="${CODEBOX_DISK_SIZE}GB" \
   --boot-disk-type=pd-balanced \
   --tags="$CODEBOX_NETWORK_TAG" \
+  --scopes=https://www.googleapis.com/auth/compute \
   --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring
 
 codebox_info "Instance created. Installing tooling ..."
