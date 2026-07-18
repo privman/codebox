@@ -11,8 +11,7 @@ codebox_require_project
 status="$(codebox_instance_status)"
 [ -n "$status" ] || codebox_die "instance '$CODEBOX_INSTANCE' not found. Run 'codebox create' first."
 if [ "$status" != "RUNNING" ]; then
-  codebox_info "Instance status is $status; starting it ..."
-  codebox_gcloud compute instances start "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE"
+  codebox_start_or_resume "$status"
 fi
 
 codebox_info "Waiting for SSH (via IAP) ..."

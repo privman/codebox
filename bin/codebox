@@ -17,10 +17,12 @@ Usage: codebox [--provider <name>] <command>
 
 Commands:
   create     Provision the VM + firewall, then install the tooling
-  connect    Start the VM if needed and open the editor tunnel (localhost)
+  connect    Bring the VM up if needed (resume/start) and open the editor tunnel
   ssh        Open an interactive SSH shell
-  start      Start the (stopped) VM
-  stop       Stop the VM (halts compute billing)
+  start      Start the (stopped) VM, or resume it if suspended
+  stop       Stop the VM (full shutdown; halts compute billing, loses running state)
+  suspend    Suspend the VM (freeze RAM; preserves running processes, cheaper than running)
+  resume     Resume a suspended VM (restores running processes)
   status     Show instance status
   bootstrap  Re-run the tooling install on an existing VM
   destroy    Delete the VM (and optionally the firewall rules)
@@ -70,7 +72,7 @@ PROVIDER_DIR="$ROOT/scripts/$provider"
 [ -d "$PROVIDER_DIR" ] || { echo "codebox: no scripts found for provider '$provider'" >&2; exit 1; }
 
 case "$cmd" in
-  create|bootstrap|start|stop|ssh|status|destroy)
+  create|bootstrap|start|stop|suspend|resume|ssh|status|destroy)
     exec bash "$PROVIDER_DIR/$cmd.sh" "$@" ;;
   connect|code)
     exec bash "$PROVIDER_DIR/connect.sh" "$@" ;;

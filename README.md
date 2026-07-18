@@ -111,8 +111,10 @@ connection and low CPU.
 | `codebox create`    | Create the VM + IAP firewall rules, then install the tooling       |
 | `codebox connect`   | Start the VM if needed and open the editor tunnel to `localhost`   |
 | `codebox ssh`       | Open an interactive SSH shell (over IAP)                           |
-| `codebox start`     | Start a stopped VM                                                  |
-| `codebox stop`      | Stop the VM (halts compute billing)                                |
+| `codebox start`     | Start a stopped VM (or resume it if suspended)                     |
+| `codebox stop`      | Stop the VM — full shutdown; halts compute billing, loses running state |
+| `codebox suspend`   | Suspend the VM — freeze RAM; preserves running processes, cheaper than running |
+| `codebox resume`    | Resume a suspended VM (restores running processes)                 |
 | `codebox status`    | Show the instance status                                           |
 | `codebox bootstrap` | Re-run the tooling install on an existing VM                       |
 | `codebox destroy`   | Delete the VM (and optionally the firewall rules)                  |

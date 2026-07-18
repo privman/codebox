@@ -88,6 +88,20 @@ codebox_instance_status() {
   return 1
 }
 
+# Bring the instance up to RUNNING from whatever state it's in: resume if it's
+# SUSPENDED (restoring running processes), otherwise start. No-op if already RUNNING.
+codebox_start_or_resume() {
+  case "$1" in
+    RUNNING)   return 0 ;;
+    SUSPENDED)
+      codebox_info "Instance is suspended; resuming (running processes are restored) ..."
+      codebox_gcloud compute instances resume "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" ;;
+    *)
+      codebox_info "Instance status is $1; starting ..."
+      codebox_gcloud compute instances start "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" ;;
+  esac
+}
+
 # Wait until SSH-over-IAP succeeds (bootstrap after boot can take a moment).
 codebox_wait_for_ssh() {
   local i
