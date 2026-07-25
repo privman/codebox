@@ -383,7 +383,9 @@ codebox ssh -- -N -L 8000:localhost:8000
   that auto-updates and needs no language runtime)
 - **code-server**, bound to `127.0.0.1:<CODEBOX_REMOTE_PORT>` with a generated password,
   running as a systemd service. Seeded with `window.autoDetectColorScheme: true` so the
-  editor follows your OS light/dark preference (you can override it in settings).
+  editor follows your OS light/dark preference, and a `window.title` that puts the project
+  name before the file name so browser tabs stay identifiable (override either in settings —
+  bootstrap never overwrites a value you've already set).
 - **git, GitHub CLI (`gh`), ripgrep, jq, tmux, build-essential**
 - **GitHub access for the agent**, if configured — see
   [Giving the agent access to a private repo](#giving-the-agent-access-to-a-private-repo)

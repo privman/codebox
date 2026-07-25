@@ -88,10 +88,19 @@ settings_dir="$user_data_dir/User"
 settings="$settings_dir/settings.json"
 mkdir -p "$settings_dir"
 [ -s "$settings" ] || echo '{}' > "$settings"
-# Set window.autoDetectColorScheme on by default, but don't clobber a value the
-# user has already chosen (keeps re-running bootstrap non-destructive).
+# Seed our defaults, but never clobber a value the user has already chosen (keeps
+# re-running bootstrap non-destructive) — `$defaults * .` merges with the existing
+# file winning on every key it defines.
+#   window.autoDetectColorScheme — follow the browser/OS light/dark preference.
+#   window.title — project name first. VS Code's default leads with the file name,
+#     which in a browser tab truncates to something you can't tell apart from the
+#     other codebox tabs; the ${...} placeholders are VS Code's, not the shell's.
+codebox_settings='{
+  "window.autoDetectColorScheme": true,
+  "window.title": "${rootName}${separator}${dirty}${activeEditorShort}${separator}${appName}"
+}'
 tmp="$(mktemp)"
-if jq 'if has("window.autoDetectColorScheme") then . else . + {"window.autoDetectColorScheme": true} end' \
+if jq --argjson defaults "$codebox_settings" '$defaults * .' \
      "$settings" > "$tmp" 2>/dev/null; then
   mv "$tmp" "$settings"
 else
