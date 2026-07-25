@@ -7,6 +7,7 @@ set -euo pipefail
 codebox_check_gcloud
 codebox_require_project
 codebox_validate_repo
+codebox_validate_github
 
 status="$(codebox_instance_status)"
 if [ -n "$status" ]; then

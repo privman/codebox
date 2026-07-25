@@ -39,6 +39,14 @@ _codebox_load_env
 : "${CODEBOX_ADDITIONAL_PORTS:=}"
 : "${CODEBOX_IDLE_TIMEOUT_MIN:=30}"
 : "${CODEBOX_REPO:=}"
+: "${CODEBOX_GITHUB_APP_ID:=}"
+: "${CODEBOX_GITHUB_APP_INSTALLATION_ID:=}"
+: "${CODEBOX_GITHUB_APP_KEY:=}"
+: "${CODEBOX_GITHUB_BOT_NAME:=}"
+: "${CODEBOX_GITHUB_BOT_USER_ID:=}"
+: "${CODEBOX_GITHUB_TOKEN_FILE:=}"
+: "${CODEBOX_GIT_AGENT_NAME:=}"
+: "${CODEBOX_GIT_AGENT_EMAIL:=}"
 : "${CODEBOX_ALLOW_FIREWALL_RULE:=codebox-allow-iap-ssh}"
 : "${CODEBOX_DENY_FIREWALL_RULE:=codebox-deny-ssh}"
 
@@ -64,6 +72,46 @@ codebox_validate_repo() {
     https://*/*|http://*/*|ssh://*/*|*@*:*) return 0 ;;
     *) codebox_die "CODEBOX_REPO must be an https or ssh git URI (e.g. 'https://github.com/owner/repo' or 'git@github.com:owner/repo'); got: $CODEBOX_REPO" ;;
   esac
+}
+
+# Check the GitHub-access config before we start copying secrets around. The two options
+# (a GitHub App, or a fine-grained PAT in a file) are mutually exclusive: each configures
+# git and gh differently on the VM, and quietly preferring one would be a nasty surprise.
+codebox_validate_github() {
+  local v
+  if [ -n "$CODEBOX_GITHUB_APP_KEY" ] && [ -n "$CODEBOX_GITHUB_TOKEN_FILE" ]; then
+    codebox_die "set either the CODEBOX_GITHUB_APP_* variables or CODEBOX_GITHUB_TOKEN_FILE, not both."
+  fi
+
+  if [ -n "$CODEBOX_GITHUB_APP_ID$CODEBOX_GITHUB_APP_INSTALLATION_ID$CODEBOX_GITHUB_APP_KEY" ]; then
+    [ -n "$CODEBOX_GITHUB_APP_ID" ] || codebox_die "CODEBOX_GITHUB_APP_ID is required for GitHub App access."
+    [ -n "$CODEBOX_GITHUB_APP_INSTALLATION_ID" ] || codebox_die "CODEBOX_GITHUB_APP_INSTALLATION_ID is required for GitHub App access (find it in the app's install URL)."
+    [ -n "$CODEBOX_GITHUB_APP_KEY" ] || codebox_die "CODEBOX_GITHUB_APP_KEY must point at the app's private-key .pem file on this machine."
+    for v in "$CODEBOX_GITHUB_APP_ID" "$CODEBOX_GITHUB_APP_INSTALLATION_ID"; do
+      case "$v" in
+        *[!0-9]*) codebox_die "CODEBOX_GITHUB_APP_ID and CODEBOX_GITHUB_APP_INSTALLATION_ID must be numeric; got '$v'." ;;
+      esac
+    done
+    [ -f "$CODEBOX_GITHUB_APP_KEY" ] || codebox_die "GitHub App key not found: $CODEBOX_GITHUB_APP_KEY"
+  fi
+
+  if [ -n "$CODEBOX_GITHUB_TOKEN_FILE" ]; then
+    [ -f "$CODEBOX_GITHUB_TOKEN_FILE" ] || codebox_die "GitHub token file not found: $CODEBOX_GITHUB_TOKEN_FILE"
+    [ -s "$CODEBOX_GITHUB_TOKEN_FILE" ] || codebox_die "GitHub token file is empty: $CODEBOX_GITHUB_TOKEN_FILE"
+  fi
+
+  if [ -n "$CODEBOX_GITHUB_BOT_USER_ID" ]; then
+    case "$CODEBOX_GITHUB_BOT_USER_ID" in
+      *[!0-9]*) codebox_die "CODEBOX_GITHUB_BOT_USER_ID must be the bot's numeric user id (not the app id); got '$CODEBOX_GITHUB_BOT_USER_ID'." ;;
+    esac
+  fi
+
+  # These reach the VM inside a single-quoted remote command, so reject quoting breakers.
+  for v in "$CODEBOX_GITHUB_BOT_NAME" "$CODEBOX_GIT_AGENT_NAME" "$CODEBOX_GIT_AGENT_EMAIL"; do
+    case "$v" in
+      *[\'\"\`\$\\]*) codebox_die "quotes, backslashes and \$ are not allowed in the GitHub identity settings; got '$v'." ;;
+    esac
+  done
 }
 
 codebox_check_gcloud() {

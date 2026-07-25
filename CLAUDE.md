@@ -18,7 +18,8 @@ is structured so more can be added. See `README.md` for the full model.
   Every other script in `scripts/gcp/` sources it.
 - `scripts/gcp/*.sh` — GCP-specific commands (create/start/stop/connect/ssh/status/bootstrap/destroy).
 - `vm/` — provider-agnostic files copied to and executed **on the VM** (`bootstrap.sh`,
-  `idle-shutdown.sh`, `systemd/`).
+  `idle-shutdown.sh`, `systemd/`, and the GitHub-access helpers `gh-app-token.sh`,
+  `git-credential-codebox.sh`, `gh-shim.sh`, installed into `~/.local/bin`).
 
 ## Conventions
 

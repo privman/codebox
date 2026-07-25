@@ -6,6 +6,11 @@ codebox*.env
 # Local read-only clone of upstream code-server (for source reference; not part of codebox)
 /vendor/
 
+# Private keys / tokens. These belong outside the repo entirely (codebox.env points at
+# them by path), but the glob is here so a stray copy can't be committed by accident.
+*.pem
+*.key
+
 # Editor / OS cruft
 .DS_Store
 *.log

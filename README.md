@@ -151,6 +151,14 @@ All settings live in `codebox.env` (git-ignored). Copy `codebox.env.example` and
 | `CODEBOX_ADDITIONAL_PORTS` | *(empty)* | Comma-separated extra ports to forward on `connect` (same port local + VM) |
 | `CODEBOX_IDLE_TIMEOUT_MIN`| `30`             | Idle minutes before auto-suspend (`0` disables)     |
 | `CODEBOX_REPO`            | *(empty)*        | Git repo to clone into the VM; its root is the folder code-server opens |
+| `CODEBOX_GITHUB_APP_ID`   | *(empty)*        | GitHub App id (option A — see [private repo access](#giving-the-agent-access-to-a-private-repo)) |
+| `CODEBOX_GITHUB_APP_INSTALLATION_ID` | *(empty)* | The app's installation id on your repo   |
+| `CODEBOX_GITHUB_APP_KEY`  | *(empty)*        | Path **on your laptop** to the app's `.pem`; copied to the VM |
+| `CODEBOX_GITHUB_BOT_NAME` | *(looked up)*    | Bot login, e.g. `codebox-agent[bot]`                |
+| `CODEBOX_GITHUB_BOT_USER_ID` | *(looked up)* | Bot's **user** id (not the app id)                  |
+| `CODEBOX_GITHUB_TOKEN_FILE` | *(empty)*      | Path on your laptop to a file holding a fine-grained PAT (option B) |
+| `CODEBOX_GIT_AGENT_NAME`  | *(from the app)* | Author/committer name for Claude Code's commits     |
+| `CODEBOX_GIT_AGENT_EMAIL` | *(from the app)* | Author/committer email for Claude Code's commits    |
 
 ## Running multiple codeboxes
 
@@ -200,10 +208,149 @@ when code-server has no last-opened folder yet — after that, it remembers wher
 
 **Credentials.** The clone runs non-interactively, so a **public https** repo works out of the
 box while anything needing auth fails fast (with a warning; the rest of bootstrap still
-completes) rather than hanging on a prompt. For a private repo, put credentials on the VM —
-an SSH key in `~/.ssh` (a GitHub deploy key works well) or a git credential helper — then
-re-run `codebox bootstrap` to pick the clone up. Note that credentials placed on the VM's disk
-survive suspend/stop but not `codebox destroy`.
+completes) rather than hanging on a prompt. For a **private** repo, configure GitHub access as
+below — bootstrap installs the credentials before it clones, so it works on the first
+`codebox create`.
+
+## Giving the agent access to a private repo
+
+This is what lets Claude Code on the box clone a private repo, push branches, and open PRs —
+and be recognisable as an agent while doing it. Point `CODEBOX_REPO` at the **https** URI so a
+single credential covers both git and the GitHub API (`gh`), then pick one of two options:
+
+| | **A — GitHub App** | **B — fine-grained PAT** |
+| --- | --- | --- |
+| Setup time | ~10 min, once | ~2 min |
+| Push branches / open PRs | ✅ / ✅ | ✅ / ✅ |
+| Author identity on commits | `name[bot]`, with avatar + `bot` badge | separate name, but unlinked — no avatar |
+| PRs are opened by | the app's bot | **you** |
+| Extra paid org seat | no | no |
+| Credential on the VM | app private key; tokens expire hourly | the token itself, until you rotate it |
+| Revoking | uninstall the app | delete the token |
+
+Both options give the agent its own **author identity** on commits — bootstrap configures that
+either way (see [below](#how-the-agent-gets-its-own-identity)). The difference is whether that
+identity is *attested* or merely *asserted*:
+
+- With the **app**, the bot is a real GitHub actor: it is what pushed the branch and what
+  opened the PR, and its commits carry the bot's avatar and badge. History and GitHub's own
+  record of who did the work agree.
+- With a **PAT**, the commits say `codebox-agent`, but that is a string the box types into a
+  commit — nothing ties it to an account. Every push and PR is recorded as **yours**, because
+  the token is yours. Someone reading the history sees the agent; someone reading the audit
+  log or the PR author sees you.
+
+So Option A if you want the agent's work to be distinguishable from yours by something
+stronger than a convention. Option B is a fine stepping stone, and you can switch later
+without touching the repo.
+
+### Option A — GitHub App (recommended)
+
+On GitHub, under **Settings → Developer settings → GitHub Apps → New GitHub App**:
+
+1. Repository permissions: **Contents: Read and write**, **Pull requests: Read and write**
+   (Metadata: Read is added automatically). Uncheck **Active** under Webhook — nothing here
+   listens for events. Deliberately leave **Workflows** unset: without it the agent cannot
+   modify `.github/workflows`, which is a guardrail worth keeping.
+2. **Generate a private key** — a `.pem` downloads. Note the **App ID** on the same page.
+3. **Install App** onto the one repository. The URL of the resulting settings page ends in
+   `/installations/<id>` — that number is the **installation ID**.
+
+Then in `codebox.env`:
+
+```bash
+CODEBOX_REPO="https://github.com/owner/repo"
+CODEBOX_GITHUB_APP_ID="123456"
+CODEBOX_GITHUB_APP_INSTALLATION_ID="78901234"
+CODEBOX_GITHUB_APP_KEY="$HOME/.secrets/codebox-agent.private-key.pem"   # path on your laptop
+```
+
+`codebox create` (or `codebox bootstrap` on an existing box) copies the key to
+`~/.config/codebox/gh-app.pem` on the VM at mode `600` and wires up:
+
+- **`~/.local/bin/codebox-gh-token`** — mints an installation token from the key (valid one
+  hour, cached for 45 minutes) and prints it. Nothing longer-lived is ever stored.
+- **`~/.local/bin/git-credential-codebox`** — a
+  [git credential helper](https://git-scm.com/docs/gitcredentials), registered for
+  `https://github.com` only, that hands git a freshly minted token. `git push` just works.
+- **`~/.local/bin/gh`** — a shim that runs the real `gh` with `GH_TOKEN` set the same way, so
+  `gh pr create` opens the PR as the app's bot with no stored login.
+- **`~/.claude/settings.json`** — the agent's git identity (below).
+
+The keys stay on the VM's disk across suspend/stop, but not `codebox destroy` — keep the
+`.pem` in your password manager so you can re-seed a fresh box.
+
+**Guardrail worth adding.** The app has `contents:write`, which permits pushing to `main`. Add
+a repository **ruleset** requiring a pull request for `main`, and "push into branches freely"
+becomes bounded by the server rather than by the agent's good behaviour.
+
+**If something 401s**, the cached token may be stale (e.g. you just reinstalled the app):
+`rm ~/.cache/codebox/gh-token` forces a fresh one.
+
+### Option B — fine-grained PAT (quick)
+
+Under **Settings → Developer settings → Personal access tokens → Fine-grained tokens**, create
+one scoped to just that repository with **Contents: Read and write** and **Pull requests: Read
+and write**. Save it to a file on your laptop rather than pasting it into `codebox.env` —
+that file is plaintext, and a path keeps the secret out of it:
+
+```bash
+umask 077; printf '%s\n' "github_pat_..." > ~/.secrets/codebox-gh-token
+```
+
+```bash
+# in codebox.env
+CODEBOX_REPO="https://github.com/owner/repo"
+CODEBOX_GITHUB_TOKEN_FILE="$HOME/.secrets/codebox-gh-token"
+```
+
+Bootstrap copies it to the VM and runs `gh auth login --with-token` plus `gh auth setup-git`,
+so the one token covers pushes and PR creation. Fine-grained tokens expire — to rotate, update
+the file and re-run `codebox bootstrap`.
+
+Setting both options at once is rejected rather than silently resolved: they configure git and
+`gh` differently, and guessing would be a nasty surprise.
+
+### How the agent gets its own identity
+
+Two different mechanisms, easily conflated:
+
+**In git history**, attribution comes from the commit's author email. For a GitHub App the
+form is `<bot-user-id>+<slug>[bot]@users.noreply.github.com` — and that number is the **bot
+user's** id, *not* the app id. Get it wrong and the commit shows as an unlinked name with no
+avatar. Bootstrap looks both values up from the API for you; override them with
+`CODEBOX_GITHUB_BOT_NAME` / `CODEBOX_GITHUB_BOT_USER_ID` if the box can't reach
+`api.github.com`. With a PAT there is no bot account to point at, so the identity defaults to
+a plain `codebox-agent <codebox-agent@users.noreply.github.com>` — distinct in the log, but
+linked to nothing.
+
+**Scoping that to Claude only** matters because you and Claude share one unix user on the VM —
+a global `user.email` would relabel your own commits too. So the identity goes in
+`~/.claude/settings.json` under `env`, which Claude Code applies to the subprocesses it spawns:
+
+```json
+{
+  "env": {
+    "GIT_AUTHOR_NAME": "codebox-agent[bot]",
+    "GIT_AUTHOR_EMAIL": "12345678+codebox-agent[bot]@users.noreply.github.com",
+    "GIT_COMMITTER_NAME": "codebox-agent[bot]",
+    "GIT_COMMITTER_EMAIL": "12345678+codebox-agent[bot]@users.noreply.github.com"
+  },
+  "attribution": { "commit": "🤖 committed by codebox-agent[bot] on codebox" }
+}
+```
+
+Commits you make yourself in a VM terminal keep whatever `~/.gitconfig` says. `attribution` is
+only seeded if you haven't set one. Override the whole identity with `CODEBOX_GIT_AGENT_NAME` /
+`CODEBOX_GIT_AGENT_EMAIL`.
+
+### What not to use
+
+- **Deploy keys** — they can clone and push, but carry no API access, so the agent cannot open
+  a PR.
+- **Classic PATs** — they reach every repo you can. A leak on a long-lived dev VM is expensive.
+- **Your own `gh auth login`** on the box — convenient, and it puts full account access on a
+  machine you suspend and forget about.
 
 ## Accessing a dev server running in the box
 
@@ -237,7 +384,9 @@ codebox ssh -- -N -L 8000:localhost:8000
 - **code-server**, bound to `127.0.0.1:<CODEBOX_REMOTE_PORT>` with a generated password,
   running as a systemd service. Seeded with `window.autoDetectColorScheme: true` so the
   editor follows your OS light/dark preference (you can override it in settings).
-- **git, ripgrep, jq, tmux, build-essential**
+- **git, GitHub CLI (`gh`), ripgrep, jq, tmux, build-essential**
+- **GitHub access for the agent**, if configured — see
+  [Giving the agent access to a private repo](#giving-the-agent-access-to-a-private-repo)
 - **your project**, if `CODEBOX_REPO` is set — cloned into the home directory and opened as
   code-server's default folder (see [Cloning your project into the box](#cloning-your-project-into-the-box))
 - **codebox idle auto-suspend** systemd timer
@@ -289,6 +438,11 @@ This repo is built to be safe to open-source:
 - **No secrets committed.** `codebox.env` (which holds your project id) is git-ignored;
   only `codebox.env.example` is tracked. The code-server password is generated on the VM
   and never leaves it. Claude Code credentials are entered interactively on the VM.
+- **GitHub secrets live outside the repo.** `codebox.env` stores only a *path* to the app
+  key or token file, never the secret itself, and `*.pem`/`*.key` are git-ignored as a
+  backstop. On the VM they sit in `~/.config/codebox/` at mode `600`. With a GitHub App,
+  what's on disk is the app key alone — the tokens derived from it expire within the hour
+  and are scoped to the repos the app is installed on.
 - **SSH is IAP-only.** `create` adds an allow rule for the IAP range
   (`35.235.240.0/20`) plus a higher-priority deny rule for SSH from anywhere else, scoped
   to the instance's network tag — so even though the VM keeps an ephemeral external IP
