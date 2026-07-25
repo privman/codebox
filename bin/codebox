@@ -2,8 +2,21 @@
 # codebox - manage a cloud dev VM for Claude Code + code-server.
 set -euo pipefail
 
-SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlinks before deriving ROOT: packaged installs put the tree in a private
+# directory (Homebrew's libexec, /usr/lib/codebox for the .deb) and link a single
+# entry point onto the PATH. Walking the links by hand keeps this working on macOS,
+# where `readlink -f` does not exist.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  LINK="$(readlink "$SOURCE")"
+  case "$LINK" in
+    /*) SOURCE="$LINK" ;;
+    *)  SOURCE="$(dirname "$SOURCE")/$LINK" ;;
+  esac
+done
+SELF="$(cd "$(dirname "$SOURCE")" && pwd)"
 ROOT="$(cd "$SELF/.." && pwd)"
+VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo unknown)"
 
 # Only GCP is implemented today; more providers may be added later.
 DEFAULT_PROVIDER="gcp"
@@ -26,6 +39,7 @@ Commands:
   status     Show instance status
   bootstrap  Re-run the tooling install on an existing VM
   destroy    Delete the VM (and optionally the firewall rules)
+  version    Print the codebox version
 
 Options:
   --provider <name>   Cloud provider to target. Default: gcp
@@ -56,6 +70,7 @@ shift || true
 
 case "$cmd" in
   -h|--help|help) usage; exit 0 ;;
+  -V|--version|version) echo "codebox $VERSION"; exit 0 ;;
 esac
 
 # --- validate provider ---------------------------------------------------

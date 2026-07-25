@@ -11,6 +11,9 @@ codebox*.env
 *.pem
 *.key
 
+# Release artifacts (packaging/build.sh writes them; CI uploads them to the release)
+/dist/
+
 # Editor / OS cruft
 .DS_Store
 *.log
