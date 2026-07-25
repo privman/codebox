@@ -38,6 +38,7 @@ _codebox_load_env
 : "${CODEBOX_REMOTE_PORT:=8080}"
 : "${CODEBOX_ADDITIONAL_PORTS:=}"
 : "${CODEBOX_IDLE_TIMEOUT_MIN:=30}"
+: "${CODEBOX_REPO:=}"
 : "${CODEBOX_ALLOW_FIREWALL_RULE:=codebox-allow-iap-ssh}"
 : "${CODEBOX_DENY_FIREWALL_RULE:=codebox-deny-ssh}"
 
@@ -48,6 +49,22 @@ CODEBOX_IAP_RANGE="35.235.240.0/20"
 codebox_die()  { printf 'codebox: %s\n' "$*" >&2; exit 1; }
 codebox_info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 codebox_warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
+
+# Sanity-check CODEBOX_REPO before we spend minutes creating a VM. The actual URI
+# handling (and the clone) happens on the VM in vm/bootstrap.sh; here we only reject
+# shapes git wouldn't accept and characters that would break the quoting of the
+# remote bootstrap command (and are never valid in a git URI anyway).
+codebox_validate_repo() {
+  [ -n "${CODEBOX_REPO:-}" ] || return 0
+  case "$CODEBOX_REPO" in
+    *[[:space:]\'\"\`\$\\\;\&\|\<\>\(\)]*)
+      codebox_die "CODEBOX_REPO contains characters that aren't valid in a git URI: $CODEBOX_REPO" ;;
+  esac
+  case "$CODEBOX_REPO" in
+    https://*/*|http://*/*|ssh://*/*|*@*:*) return 0 ;;
+    *) codebox_die "CODEBOX_REPO must be an https or ssh git URI (e.g. 'https://github.com/owner/repo' or 'git@github.com:owner/repo'); got: $CODEBOX_REPO" ;;
+  esac
+}
 
 codebox_check_gcloud() {
   command -v gcloud >/dev/null 2>&1 || \

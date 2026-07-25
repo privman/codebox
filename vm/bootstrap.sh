@@ -6,6 +6,7 @@ set -euo pipefail
 
 REMOTE_PORT="${CODEBOX_REMOTE_PORT:-8080}"
 IDLE_TIMEOUT_MIN="${CODEBOX_IDLE_TIMEOUT_MIN:-30}"
+REPO="${CODEBOX_REPO:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\033[1;32m[codebox]\033[0m %s\n' "$*"; }
@@ -57,7 +58,8 @@ else
 fi
 
 log "Applying default editor settings ..."
-settings_dir="$HOME/.local/share/code-server/User"
+user_data_dir="$HOME/.local/share/code-server"
+settings_dir="$user_data_dir/User"
 settings="$settings_dir/settings.json"
 mkdir -p "$settings_dir"
 [ -s "$settings" ] || echo '{}' > "$settings"
@@ -70,6 +72,67 @@ if jq 'if has("window.autoDetectColorScheme") then . else . + {"window.autoDetec
 else
   rm -f "$tmp"
   log "warning: could not parse $settings; leaving it untouched."
+fi
+
+# --- project repo --------------------------------------------------------
+# Clone CODEBOX_REPO into the home directory and make its root the folder
+# code-server opens. Idempotent: an existing checkout is left alone.
+if [ -n "$REPO" ]; then
+  # Derive the checkout directory from the URI's last path segment. Handles
+  # https://host/owner/repo, ssh://[user@]host/owner/repo and scp-style
+  # git@host:owner/repo; the `.git` suffix is optional.
+  repo_path="$REPO"
+  case "$repo_path" in
+    *://*) repo_path="${repo_path#*://}" ;;  # strip the scheme; [user@]host is dropped below
+    *@*:*) repo_path="${repo_path#*:}" ;;    # scp-style: keep what follows the colon
+  esac
+  repo_path="${repo_path%/}"                 # tolerate a trailing slash
+  repo_name="${repo_path##*/}"
+  repo_name="${repo_name%.git}"              # `.git` suffix is optional
+
+  repo_dir=""
+  if [ -z "$repo_name" ]; then
+    log "warning: could not derive a directory name from CODEBOX_REPO='$REPO'; skipping clone."
+  elif [ -d "$HOME/$repo_name/.git" ]; then
+    repo_dir="$HOME/$repo_name"
+    log "Repo already cloned at $repo_dir; leaving it as is."
+  elif [ -e "$HOME/$repo_name" ]; then
+    log "warning: $HOME/$repo_name exists but is not a git checkout; skipping clone."
+  else
+    log "Cloning $REPO into $HOME/$repo_name ..."
+    # Never block on a credential prompt — bootstrap runs non-interactively, so a
+    # private repo must fail fast rather than hang waiting on stdin.
+    if GIT_TERMINAL_PROMPT=0 \
+       GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new' \
+       git clone "$REPO" "$HOME/$repo_name"; then
+      repo_dir="$HOME/$repo_name"
+    else
+      log "warning: clone failed. If the repo is private, put credentials on the VM (an SSH"
+      log "         key in ~/.ssh, or a git credential helper) and re-run 'codebox bootstrap'."
+    fi
+  fi
+
+  if [ -n "$repo_dir" ]; then
+    # code-server remembers the last folder you opened in coder.json and prefers it
+    # over anything else, so seeding that entry makes the repo the default folder.
+    # Only seed it when nothing is recorded yet — otherwise we'd yank the user out of
+    # whatever they last had open every time bootstrap is re-run.
+    coder_json="$user_data_dir/coder.json"
+    if [ -s "$coder_json" ] && jq -e '.query.folder // .query.workspace' "$coder_json" >/dev/null 2>&1; then
+      log "code-server already has a last-opened folder; leaving it as is."
+    else
+      [ -s "$coder_json" ] && jq -e . "$coder_json" >/dev/null 2>&1 || echo '{}' > "$coder_json"
+      tmp="$(mktemp)"
+      if jq --arg folder "$repo_dir" '.query = ((.query // {}) + {folder: $folder})' \
+           "$coder_json" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$coder_json"
+        log "code-server will open $repo_dir by default."
+      else
+        rm -f "$tmp"
+        log "warning: could not update $coder_json; code-server will open its usual default view."
+      fi
+    fi
+  fi
 fi
 
 log "Enabling code-server service ..."

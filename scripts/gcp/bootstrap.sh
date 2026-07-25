@@ -7,6 +7,7 @@ set -euo pipefail
 
 codebox_check_gcloud
 codebox_require_project
+codebox_validate_repo
 
 status="$(codebox_instance_status)"
 [ -n "$status" ] || codebox_die "instance '$CODEBOX_INSTANCE' not found. Run 'codebox create' first."
@@ -25,6 +26,6 @@ codebox_gcloud compute scp --recurse "$CODEBOX_ROOT/vm" "$CODEBOX_INSTANCE:~/vm"
 
 codebox_info "Running on-VM bootstrap (code-server, Claude Code, idle-shutdown) ..."
 codebox_gcloud compute ssh "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" --tunnel-through-iap \
-  --command="CODEBOX_REMOTE_PORT='${CODEBOX_REMOTE_PORT}' CODEBOX_IDLE_TIMEOUT_MIN='${CODEBOX_IDLE_TIMEOUT_MIN}' bash ~/vm/bootstrap.sh"
+  --command="CODEBOX_REMOTE_PORT='${CODEBOX_REMOTE_PORT}' CODEBOX_IDLE_TIMEOUT_MIN='${CODEBOX_IDLE_TIMEOUT_MIN}' CODEBOX_REPO='${CODEBOX_REPO}' bash ~/vm/bootstrap.sh"
 
 codebox_info "Done. Run 'codebox connect' to open the editor."

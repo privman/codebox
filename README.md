@@ -90,7 +90,7 @@ Notes:
 ```bash
 # 1. Configure
 cp codebox.env.example codebox.env
-$EDITOR codebox.env            # set CODEBOX_PROJECT (and zone/size if you like)
+$EDITOR codebox.env            # set CODEBOX_PROJECT (and CODEBOX_REPO, zone/size if you like)
 
 # 2. Put the CLI on your PATH (optional but convenient)
 export PATH="$PWD/bin:$PATH"
@@ -150,6 +150,7 @@ All settings live in `codebox.env` (git-ignored). Copy `codebox.env.example` and
 | `CODEBOX_REMOTE_PORT`     | `8080`           | Port code-server binds to on the VM (localhost)     |
 | `CODEBOX_ADDITIONAL_PORTS` | *(empty)* | Comma-separated extra ports to forward on `connect` (same port local + VM) |
 | `CODEBOX_IDLE_TIMEOUT_MIN`| `30`             | Idle minutes before auto-suspend (`0` disables)     |
+| `CODEBOX_REPO`            | *(empty)*        | Git repo to clone into the VM; its root is the folder code-server opens |
 
 ## Running multiple codeboxes
 
@@ -177,6 +178,32 @@ Everything else just works: the IAP firewall rules are shared and created idempo
 each VM generates its own code-server password. Per-instance config files match the
 `codebox*.env` entry in `.gitignore`, so they won't be committed (only `codebox.env.example`
 is tracked).
+
+## Cloning your project into the box
+
+Set `CODEBOX_REPO` and `codebox create` clones it into the VM's home directory, then makes the
+repo root the folder code-server opens — so `codebox connect` drops you straight into the
+project. https and ssh URIs are both accepted, and the `.git` suffix is optional:
+
+```bash
+# in codebox.env — all four of these clone into ~/repo
+CODEBOX_REPO="https://github.com/owner/repo.git"
+CODEBOX_REPO="https://github.com/owner/repo"
+CODEBOX_REPO="git@github.com:owner/repo.git"
+CODEBOX_REPO="ssh://git@github.com/owner/repo"
+```
+
+The checkout directory comes from the URI's last path segment (`repo` above). Cloning also
+runs on `codebox bootstrap`, and it's idempotent: an existing checkout is never touched, so
+re-running bootstrap won't disturb local work. Likewise, the default folder is only seeded
+when code-server has no last-opened folder yet — after that, it remembers wherever you were.
+
+**Credentials.** The clone runs non-interactively, so a **public https** repo works out of the
+box while anything needing auth fails fast (with a warning; the rest of bootstrap still
+completes) rather than hanging on a prompt. For a private repo, put credentials on the VM —
+an SSH key in `~/.ssh` (a GitHub deploy key works well) or a git credential helper — then
+re-run `codebox bootstrap` to pick the clone up. Note that credentials placed on the VM's disk
+survive suspend/stop but not `codebox destroy`.
 
 ## Accessing a dev server running in the box
 
@@ -211,6 +238,8 @@ codebox ssh -- -N -L 8000:localhost:8000
   running as a systemd service. Seeded with `window.autoDetectColorScheme: true` so the
   editor follows your OS light/dark preference (you can override it in settings).
 - **git, ripgrep, jq, tmux, build-essential**
+- **your project**, if `CODEBOX_REPO` is set — cloned into the home directory and opened as
+  code-server's default folder (see [Cloning your project into the box](#cloning-your-project-into-the-box))
 - **codebox idle auto-suspend** systemd timer
 
 No language runtime is installed by default. Debian 12 already ships Python 3, which covers
