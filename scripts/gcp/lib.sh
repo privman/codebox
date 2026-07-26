@@ -8,10 +8,13 @@ CODEBOX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODEBOX_ROOT="$(cd "${CODEBOX_SCRIPT_DIR}/../.." && pwd)"
 
 # --- load config ---------------------------------------------------------
-# Priority: $CODEBOX_ENV, ./codebox.env, <repo>/codebox.env
+# Priority: $CODEBOX_ENV, ./codebox.env, <repo>/codebox.env, ~/.config/codebox/codebox.env.
+# The last one is the fallback for installs from Homebrew or apt, where CODEBOX_ROOT is a
+# read-only system directory and there is no checkout to keep a config in.
 _codebox_load_env() {
   local candidate
-  for candidate in "${CODEBOX_ENV:-}" "$PWD/codebox.env" "$CODEBOX_ROOT/codebox.env"; do
+  for candidate in "${CODEBOX_ENV:-}" "$PWD/codebox.env" "$CODEBOX_ROOT/codebox.env" \
+                   "${XDG_CONFIG_HOME:-$HOME/.config}/codebox/codebox.env"; do
     [ -n "$candidate" ] || continue
     if [ -f "$candidate" ]; then
       set -a

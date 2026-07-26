@@ -20,6 +20,10 @@ is structured so more can be added. See `README.md` for the full model.
 - `vm/` — provider-agnostic files copied to and executed **on the VM** (`bootstrap.sh`,
   `idle-shutdown.sh`, `systemd/`, and the GitHub-access helpers `gh-app-token.sh`,
   `git-credential-codebox.sh`, `gh-shim.sh`, installed into `~/.local/bin`).
+- `VERSION` / `packaging/` / `Formula/` / `.github/workflows/release.yml` — the release
+  process. Bumping `VERSION` on `main` is what publishes a release; see the Releasing
+  section of `README.md`. Anything a user needs at runtime must be listed in
+  `PAYLOAD_PATHS` in `packaging/build.sh`, or it won't ship in the packages.
 
 ## Conventions
 

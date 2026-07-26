@@ -50,6 +50,48 @@ Your GCP user needs, at minimum:
 - `roles/iap.tunnelResourceAccessor` — open IAP tunnels
 - `roles/compute.osLogin` (only if OS Login is enabled on the project)
 
+## Installing
+
+Any of these gets you a `codebox` on your PATH. They all ship the same tree — the CLI,
+the provider scripts, and the files that get copied to the VM.
+
+**Homebrew** (macOS or Linux):
+
+```bash
+brew tap privman/codebox https://github.com/privman/codebox
+brew install codebox
+```
+
+**apt** (Debian/Ubuntu):
+
+```bash
+curl -fsSL https://privman.github.io/codebox/codebox.gpg \
+  | sudo tee /usr/share/keyrings/codebox.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/codebox.gpg] https://privman.github.io/codebox stable main" \
+  | sudo tee /etc/apt/sources.list.d/codebox.list
+sudo apt-get update && sudo apt-get install codebox
+```
+
+**Standalone download** — one self-extracting file, no package manager:
+
+```bash
+curl -fsSLO https://github.com/privman/codebox/releases/latest/download/codebox
+chmod +x codebox && sudo mv codebox /usr/local/bin/
+```
+
+It unpacks itself into `~/.cache/codebox/bundle/` on first run. Checksums for every
+release artifact are in `SHA256SUMS` on the [releases page](https://github.com/privman/codebox/releases).
+
+**From a checkout** — what you want if you're changing codebox itself:
+
+```bash
+git clone https://github.com/privman/codebox && export PATH="$PWD/codebox/bin:$PATH"
+```
+
+A packaged install has no checkout to keep `codebox.env` next to, so put it in the
+directory you run `codebox` from, or in `~/.config/codebox/codebox.env` for a machine-wide
+default (see [Configuration](#configuration)).
+
 ## Setting up a GCP project from scratch
 
 If you'd rather run codebox in its own project (easy to reuse an existing billing account
@@ -132,10 +174,20 @@ implemented right now; other values are rejected as unimplemented.
   A future provider would live alongside as `scripts/<provider>/`.
 - `vm/` — provider-agnostic files installed on the VM (code-server, Claude Code,
   the idle auto-suspend timer).
+- `VERSION` — the released version, and what triggers a release (see [Releasing](#releasing)).
+- `packaging/` — build the release artifacts (`build.sh`) and the apt repo (`publish-apt.sh`).
+- `Formula/codebox.rb` — the Homebrew formula; the release workflow keeps it current.
 
 ## Configuration
 
 All settings live in `codebox.env` (git-ignored). Copy `codebox.env.example` and edit.
+The first of these that exists wins:
+
+1. `$CODEBOX_ENV`, if you set it — an explicit path, used by
+   [running multiple codeboxes](#running-multiple-codeboxes)
+2. `./codebox.env` in the directory you run the command from
+3. `codebox.env` next to the codebox tree (a git checkout; not applicable to packaged installs)
+4. `~/.config/codebox/codebox.env` — machine-wide fallback, handy after `brew`/`apt` install
 
 | Variable                  | Default          | Meaning                                             |
 | ------------------------- | ---------------- | --------------------------------------------------- |
@@ -431,6 +483,66 @@ instance, disk, firewall, and all — by deleting the project:
 
 ```bash
 gcloud projects delete "$PROJECT_ID"
+```
+
+## Releasing
+
+`VERSION` drives everything. Push a commit to `main` that bumps it and
+[`.github/workflows/release.yml`](.github/workflows/release.yml) does the rest:
+
+```bash
+echo "0.2.0" > VERSION
+git commit -am "Release 0.2.0" && git push
+```
+
+The workflow compares `VERSION` against the previous commit and stops immediately unless it
+went up (a push that leaves it alone costs one quick job and publishes nothing). When it did
+go up, the workflow tags `v<version>`, builds the artifacts, and publishes:
+
+- a **GitHub release** holding the standalone `codebox` bundle, the `codebox-<version>.tar.gz`
+  source tarball, the `.deb`, and `SHA256SUMS`
+- **`Formula/codebox.rb`**, rewritten to point at the new tarball and its checksum, committed
+  back to `main` (that commit doesn't touch `VERSION`, so it can't trigger another release)
+- the **apt repository** on the `gh-pages` branch — the new `.deb` is added to the pool and
+  the index is re-signed. Older versions stay in the pool.
+
+A version that goes *backwards* or isn't `MAJOR.MINOR.PATCH` fails the run rather than
+publishing something odd. If a release dies halfway, re-run the workflow by hand
+(**Actions → Release → Run workflow**): every step tolerates having already run, so it
+picks up where it stopped. That manual run is also how you cut the first release, since
+`VERSION` is already at its starting value.
+
+### One-time setup
+
+The GitHub release and the Homebrew formula need nothing beyond the default
+`GITHUB_TOKEN`. The apt repository needs a signing key — without it the workflow still
+releases and just logs a warning that it skipped apt.
+
+```bash
+# 1. Make a signing key (any name/email you're happy to publish).
+gpg --quick-generate-key "codebox releases <codebox@users.noreply.github.com>" rsa4096 sign never
+gpg --armor --export-secret-keys codebox@users.noreply.github.com   # paste into the secret below
+```
+
+2. Add repo secrets (**Settings → Secrets and variables → Actions**):
+   `APT_GPG_PRIVATE_KEY` (the armored private key) and, if the key has one,
+   `APT_GPG_PASSPHRASE`.
+3. Enable Pages (**Settings → Pages**) with source *Deploy from a branch*, branch
+   `gh-pages`, folder `/`. The branch appears the first time the workflow publishes.
+
+Keep the private key out of the repo — it belongs only in the Actions secret and wherever
+you keep your own backups.
+
+### Checking a release before you tag one
+
+Both publishing scripts run locally:
+
+```bash
+packaging/build.sh 0.2.0      # writes dist/: bundle, tarball, .deb, SHA256SUMS
+dist/codebox version          # the bundle self-test the build already ran
+
+# Build the apt tree into dist/apt without pushing anything (needs a key in $GPG_KEY):
+GPG_KEY="$(gpg --armor --export-secret-keys <key-id>)" packaging/publish-apt.sh 0.2.0
 ```
 
 ## Security model / going public

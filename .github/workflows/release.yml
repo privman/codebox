@@ -1,0 +1,139 @@
+name: Release
+
+# Releases are driven by the VERSION file: push a commit to main that bumps it and
+# this builds the artifacts, tags v<version>, publishes a GitHub release, points the
+# Homebrew formula at it, and adds the .deb to the apt repo on gh-pages. Pushes that
+# leave VERSION alone do nothing.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need the previous commit's VERSION and the existing tags
+
+      - id: check
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          new="$(tr -d '[:space:]' < VERSION)"
+          if ! [[ "$new" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=VERSION::VERSION must be MAJOR.MINOR.PATCH; got '$new'"
+            exit 1
+          fi
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+
+          # A manual run releases whatever VERSION currently says, even if the tag is
+          # already there: that is how you retry a release that failed partway through,
+          # and the release job is idempotent.
+          if [ "$EVENT" = workflow_dispatch ]; then
+            echo "Manual run — releasing v$new."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git rev-parse -q --verify "refs/tags/v$new" >/dev/null; then
+            echo "Tag v$new already exists — nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          old="$(git show 'HEAD^:VERSION' 2>/dev/null | tr -d '[:space:]')" || old=""
+          old="${old:-0.0.0}"
+          if [ "$old" = "$new" ]; then
+            echo "VERSION unchanged ($new) — nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -1)" != "$new" ]; then
+            echo "::error file=VERSION::VERSION went backwards: $old -> $new"
+            exit 1
+          fi
+          echo "VERSION $old -> $new — releasing."
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: detect
+    if: needs.detect.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.detect.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      # Read once here so the apt steps can test whether signing is configured;
+      # secrets are not visible to a step's own `if:` condition.
+      GPG_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build artifacts
+        run: packaging/build.sh "$VERSION"
+
+      - name: Tag and publish the GitHub release
+        run: |
+          set -euo pipefail
+          # Each step tolerates having already run, so a manual re-run can finish a
+          # release that died halfway.
+          git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null || git tag "v$VERSION"
+          git push origin "refs/tags/v$VERSION" || echo "tag already on origin"
+
+          assets=(dist/codebox "dist/codebox-$VERSION.tar.gz"
+                  "dist/codebox_${VERSION}_all.deb" dist/SHA256SUMS)
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" --clobber "${assets[@]}"
+          else
+            gh release create "v$VERSION" \
+              --title "codebox v$VERSION" \
+              --generate-notes \
+              "${assets[@]}"
+          fi
+
+      - name: Point the Homebrew formula at the new release
+        run: |
+          set -euo pipefail
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v$VERSION/codebox-$VERSION.tar.gz"
+          sha="$(awk -v f="codebox-$VERSION.tar.gz" '$2 == f { print $1 }' dist/SHA256SUMS)"
+          [ -n "$sha" ] || { echo "::error::no checksum for codebox-$VERSION.tar.gz"; exit 1; }
+          sed -i -e "s|^  url .*|  url \"$url\"|" -e "s|^  sha256 .*|  sha256 \"$sha\"|" Formula/codebox.rb
+          git config user.name  "codebox-release[bot]"
+          git config user.email "codebox@users.noreply.github.com"
+          git add Formula/codebox.rb
+          if git diff --cached --quiet; then
+            echo "Formula already current."
+          else
+            # [skip ci] is belt and braces: this commit leaves VERSION alone, so the
+            # run it would trigger would decide there is nothing to release anyway.
+            git commit -m "Formula: codebox $VERSION [skip ci]"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Publish the apt repository
+        if: env.GPG_KEY != ''
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dpkg-dev apt-utils
+          CODEBOX_APT_REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            packaging/publish-apt.sh "$VERSION"
+
+      - name: Note that apt publishing was skipped
+        if: env.GPG_KEY == ''
+        run: |
+          echo "::warning::APT_GPG_PRIVATE_KEY is not set, so the apt repository was not \
+          updated. The release and the Homebrew formula are published. See the Releasing \
+          section of README.md for the one-time key setup."
