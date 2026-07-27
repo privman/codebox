@@ -146,15 +146,28 @@ codebox connect
 ```
 
 Leave the `codebox connect` terminal open; it holds the tunnel. Press `Ctrl-C` to
-disconnect. The VM will auto-stop after `CODEBOX_IDLE_TIMEOUT_MIN` minutes of no SSH
-connection and low CPU.
+disconnect. The VM auto-suspends after `CODEBOX_IDLE_TIMEOUT_MIN` minutes of no SSH
+connection and low CPU — when that closes the tunnel, `connect` says so and offers to
+reconnect rather than dropping you back at the shell:
+
+```
+warning: The VM suspended itself after 30 idle minutes, which closed the tunnel.
+==> Reconnecting resumes it, and anything that was running is still there.
+Reconnect? [Y/n]
+```
+
+Answering yes resumes the VM and reopens the tunnel; `n` (or `Ctrl-D`) exits. You get the
+same offer if the tunnel drops for any other reason, with the message saying which case it
+is. While the tunnel is up, `connect` also watches the config file it loaded and reopens the
+tunnel whenever you save a change — that's how a
+[`CODEBOX_ADDITIONAL_PORTS`](#accessing-a-dev-server-running-in-the-box) edit takes effect.
 
 ## Commands
 
 | Command             | Description                                                        |
 | ------------------- | ------------------------------------------------------------------ |
 | `codebox create`    | Create the VM + IAP firewall rules, then install the tooling       |
-| `codebox connect`   | Start the VM if needed and open the editor tunnel to `localhost`   |
+| `codebox connect`   | Start the VM if needed and open the editor tunnel to `localhost`; supervises it (offers to reconnect on a drop, restarts on a config edit) |
 | `codebox ssh`       | Open an interactive SSH shell (over IAP)                           |
 | `codebox start`     | Start a stopped VM (or resume it if suspended)                     |
 | `codebox stop`      | Stop the VM — full shutdown; halts compute billing, loses running state |
@@ -422,6 +435,9 @@ CODEBOX_ADDITIONAL_PORTS="8000,5173"
 codebox connect      # forwards the editor + localhost:8000 and localhost:5173
 ```
 
+You can edit this while connected: `codebox connect` notices the save and reopens the tunnel
+with the new list, so a port you forgot to add costs a file save rather than a reconnect.
+
 Each extra port uses the same number locally and on the VM. For a one-off port you'd rather
 not keep in the config, open a separate forward instead:
 
@@ -466,6 +482,8 @@ for `CODEBOX_IDLE_TIMEOUT_MIN` minutes:
 
 Suspend freezes RAM to disk, so on the next `codebox connect` the VM **resumes** with your
 processes still running — dev servers, Claude Code sessions, shells — right where you left them.
+A `codebox connect` that was open when this happens notices the tunnel close, reports the
+suspend, and offers to resume and reconnect on the spot (see [Quick start](#quick-start)).
 The VM triggers this on itself via the Compute API (using its metadata service-account token),
 which is why the instance is created with the `compute` scope; the service account needs
 `compute.instances.suspend` (the default Compute Engine SA has it). If the suspend call ever
