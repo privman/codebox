@@ -293,6 +293,9 @@ if [ "$IDLE_TIMEOUT_MIN" -gt 0 ]; then
 IDLE_TIMEOUT_MIN=${IDLE_TIMEOUT_MIN}
 REMOTE_PORT=${REMOTE_PORT}
 LOAD_THRESHOLD=0.4
+# Traffic below this rate counts as idle. A parked code-server tab heartbeats at
+# roughly 11 KB/min, so this sits well above the noise and below real interaction.
+TRAFFIC_KB_PER_MIN=50
 EOF
   sudo cp "$HERE/systemd/codebox-idle-shutdown.service" /etc/systemd/system/
   sudo cp "$HERE/systemd/codebox-idle-shutdown.timer"   /etc/systemd/system/

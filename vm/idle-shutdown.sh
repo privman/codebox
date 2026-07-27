@@ -5,10 +5,16 @@
 # calling the Compute API on this instance itself, authenticated with the metadata
 # service-account token (requires the compute scope + compute.instances.suspend).
 #
-# "Idle" means, for IDLE_TIMEOUT_MIN consecutive minutes, ALL of:
-#   - no established SSH connection (no codebox tunnel open),
-#   - no established connection on the code-server port,
+# "Idle" means, for IDLE_TIMEOUT_MIN consecutive minutes, BOTH of:
+#   - SSH + code-server connections moving less than TRAFFIC_KB_PER_MIN,
 #   - 1-minute load average below LOAD_THRESHOLD (protects running builds/tasks).
+#
+# Note what is deliberately NOT a signal: the mere existence of a connection. An open
+# tunnel is what you leave behind when you walk away from the laptop, and a parked
+# browser tab on code-server keeps a websocket alive indefinitely — measured at about
+# 11 KB/min of pure heartbeat with nobody touching it. Counting either as "in use"
+# meant the box never suspended while a terminal or tab was left open, which is
+# exactly the case it exists to catch. So we look at the traffic *rate* instead.
 set -euo pipefail
 
 CONF=/etc/codebox-idle.conf
@@ -17,23 +23,48 @@ CONF=/etc/codebox-idle.conf
 IDLE_TIMEOUT_MIN="${IDLE_TIMEOUT_MIN:-30}"
 REMOTE_PORT="${REMOTE_PORT:-8080}"
 LOAD_THRESHOLD="${LOAD_THRESHOLD:-0.4}"
+# ~4.5x the measured idle-heartbeat rate: high enough that a parked tab reads as idle,
+# low enough that any real interaction (a keystroke, a save, a scroll) reads as busy.
+TRAFFIC_KB_PER_MIN="${TRAFFIC_KB_PER_MIN:-50}"
 
 STATE_DIR=/var/lib/codebox
 STATE="$STATE_DIR/idle-since"
+SAMPLE="$STATE_DIR/net-sample"
 mkdir -p "$STATE_DIR"
 
 now="$(date +%s)"
 active=0
 
-# Established SSH or code-server connections?
-if ss -Htn state established "( sport = :22 or dport = :22 or sport = :${REMOTE_PORT} or dport = :${REMOTE_PORT} )" \
-     2>/dev/null | grep -q .; then
-  active=1
-fi
+# How much are the SSH / code-server connections actually moving? `ss -i` reports
+# per-socket byte counters; we compare the total against the previous run to get a rate.
+sockets="$(ss -Htni state established \
+  "( sport = :22 or dport = :22 or sport = :${REMOTE_PORT} or dport = :${REMOTE_PORT} )" \
+  2>/dev/null || true)"
 
-# Interactive logins?
-if who 2>/dev/null | grep -q .; then
-  active=1
+if [ -z "$sockets" ]; then
+  # Nothing connected at all: unambiguously idle, and the old sample is meaningless.
+  rm -f "$SAMPLE"
+else
+  bytes="$(printf '%s\n' "$sockets" | grep -oE 'bytes_(sent|received):[0-9]+' \
+             | cut -d: -f2 | awk '{ s += $1 } END { print s + 0 }')"
+  prev_time=""
+  prev_bytes=""
+  [ ! -f "$SAMPLE" ] || read -r prev_time prev_bytes < "$SAMPLE" || true
+  printf '%s %s\n' "$now" "$bytes" > "$SAMPLE"
+
+  if [ -z "$prev_time" ] || [ -z "$prev_bytes" ]; then
+    # First sample since boot/resume — no rate to judge yet, so assume in use.
+    active=1
+  else
+    secs=$(( now - prev_time ))
+    delta=$(( bytes - prev_bytes ))
+    if [ "$secs" -le 0 ] || [ "$delta" -lt 0 ]; then
+      # Clock jump, or sockets closed and reopened between runs: don't guess, stay up.
+      active=1
+    elif [ $(( delta * 60 / secs )) -ge $(( TRAFFIC_KB_PER_MIN * 1024 )) ]; then
+      active=1
+    fi
+  fi
 fi
 
 # Sustained CPU load => treat as active (protect long builds / Claude Code runs).

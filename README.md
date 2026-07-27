@@ -146,9 +146,10 @@ codebox connect
 ```
 
 Leave the `codebox connect` terminal open; it holds the tunnel. Press `Ctrl-C` to
-disconnect. The VM auto-suspends after `CODEBOX_IDLE_TIMEOUT_MIN` minutes of no SSH
-connection and low CPU — when that closes the tunnel, `connect` says so and offers to
-reconnect rather than dropping you back at the shell:
+disconnect. The VM auto-suspends after `CODEBOX_IDLE_TIMEOUT_MIN` minutes of little
+traffic and low CPU — leaving this terminal (or a browser tab) open does **not** hold it
+up. When the suspend closes the tunnel, `connect` says so and offers to reconnect rather
+than dropping you back at the shell:
 
 ```
 warning: The VM suspended itself after 30 idle minutes, which closed the tunnel.
@@ -475,10 +476,18 @@ the login prompt. Your credentials stay on the VM's disk.
 A systemd timer runs every 5 minutes and **suspends** the VM once **all** of these hold
 for `CODEBOX_IDLE_TIMEOUT_MIN` minutes:
 
-- no established SSH connection (i.e. no `codebox connect`/`ssh` tunnel open),
-- no established connection on the code-server port,
+- SSH and code-server connections are moving less than `TRAFFIC_KB_PER_MIN` (default `50`),
 - 1-minute load average below `LOAD_THRESHOLD` (default `0.4`) — this protects a long
   build or a running Claude Code task even if your tunnel dropped.
+
+Note what is **not** a signal: whether a connection exists. An open tunnel is precisely
+what you leave behind when you walk away from the laptop, and a code-server tab parked in
+a browser holds a websocket open indefinitely — measured at ~11 KB/min of pure heartbeat
+with nobody touching it. Treating either as "in use" meant the box never suspended while a
+terminal or tab was left open, which is the exact case auto-suspend exists to catch. So the
+check looks at the traffic *rate*: heartbeat chatter reads as idle, while a keystroke, a
+save or a page load clears the threshold immediately. Both values live in
+`/etc/codebox-idle.conf` on the VM if you want to tune them.
 
 Suspend freezes RAM to disk, so on the next `codebox connect` the VM **resumes** with your
 processes still running — dev servers, Claude Code sessions, shells — right where you left them.
