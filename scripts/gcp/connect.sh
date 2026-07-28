@@ -26,8 +26,18 @@ WATCH_INTERVAL=2
 
 TUNNEL_PID=""
 TUNNEL_PGID=""
-TUNNEL_ENDED_BY=""   # config-changed | dropped
+TUNNEL_ENDED_BY=""   # config-changed | dropped | suspending
 OWN_PGID="$(ps -o pgid= -p $$ 2>/dev/null | tr -d '[:space:]')"
+
+# The VM announces an imminent suspend by appending to a notice file (vm/pre-suspend.sh).
+# Rather than poll for it, the tunnel's own SSH session tails that file, so the warning
+# arrives on the connection we already hold and costs nothing while nothing happens —
+# which matters, because idle detection on the VM now measures traffic and a chatty
+# channel would keep the box awake. `-F` waits for a file that does not exist yet, so
+# this is silently harmless against a VM whose bootstrap predates the notice.
+NOTICE_MARKER="CODEBOX-SUSPENDING"
+NOTICE_COMMAND="tail -n 0 -F /run/codebox/notices 2>/dev/null"
+NOTICE_OUT="$(mktemp "${TMPDIR:-/tmp}/codebox-notice.XXXXXX")"
 
 codebox_check_gcloud
 codebox_require_project
@@ -49,16 +59,23 @@ codebox_kill_tunnel() {
   TUNNEL_PGID=""
 }
 
-trap 'codebox_kill_tunnel' EXIT
+trap 'codebox_kill_tunnel; rm -f "$NOTICE_OUT"' EXIT
 trap 'codebox_kill_tunnel; codebox_info "Disconnected."; exit 0' INT TERM
+
+# Did the VM tell us it is about to suspend?
+codebox_suspend_announced() {
+  grep -q "$NOTICE_MARKER" "$NOTICE_OUT" 2>/dev/null
+}
 
 codebox_start_tunnel() {
   local pgid
+  : > "$NOTICE_OUT"
   # `set -m` puts the job in a process group of its own; turning it back off keeps
   # bash from printing asynchronous "Terminated" job notices when we stop it.
   set -m
   codebox_gcloud compute ssh "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" --tunnel-through-iap \
-    -- "${forward_args[@]}" </dev/null &
+    --command="$NOTICE_COMMAND" \
+    -- "${forward_args[@]}" </dev/null >"$NOTICE_OUT" &
   TUNNEL_PID=$!
   set +m
 
@@ -106,8 +123,15 @@ codebox_reload() {
 codebox_supervise() {
   local fingerprint="$1"
   while :; do
+    # Checked first, and again after a drop: the notice and the connection dying can
+    # land in the same poll window, and the notice is the more informative of the two.
+    if codebox_suspend_announced; then
+      TUNNEL_ENDED_BY="suspending"
+      codebox_kill_tunnel
+      return 0
+    fi
     if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
-      TUNNEL_ENDED_BY="dropped"
+      codebox_suspend_announced && TUNNEL_ENDED_BY="suspending" || TUNNEL_ENDED_BY="dropped"
       return 0
     fi
     if [ "$(codebox_config_fingerprint)" != "$fingerprint" ]; then
@@ -126,6 +150,11 @@ codebox_ask_reconnect() {
   local status="$1" answer=""
   printf '\n' >&2
   case "$status" in
+    ANNOUNCED)
+      # The VM warned us before suspending, so we closed the tunnel ourselves rather
+      # than having it cut mid-connection. Nothing went wrong here.
+      codebox_info "The VM is suspending; the tunnel was closed cleanly at this end."
+      codebox_info "Everything running on it is frozen and comes back on resume." ;;
     SUSPENDED)
       if [ "${CODEBOX_IDLE_TIMEOUT_MIN:-0}" != "0" ]; then
         codebox_warn "The VM suspended itself after ${CODEBOX_IDLE_TIMEOUT_MIN} idle minutes, which closed the tunnel."
@@ -162,6 +191,13 @@ codebox_ask_reconnect() {
 while :; do
   status="$(codebox_instance_status)"
   [ -n "$status" ] || codebox_die "instance '$CODEBOX_INSTANCE' not found. Run 'codebox create' first."
+  case "$status" in
+    # Reconnecting right after a suspend notice lands here: resuming an instance that
+    # is still SUSPENDING is rejected, so let the transition finish first.
+    PROVISIONING|STAGING|STOPPING|SUSPENDING|REPAIRING)
+      codebox_info "Instance is $status; waiting for that to finish ..."
+      status="$(codebox_wait_for_settled)" || codebox_die "instance is still $status; try again in a minute." ;;
+  esac
   if [ "$status" != "RUNNING" ]; then
     codebox_start_or_resume "$status"
     codebox_wait_for_ssh || codebox_die "timed out waiting for SSH."
@@ -174,7 +210,9 @@ while :; do
   # Build the SSH port-forward flags: the editor port first, then any extra dev-server
   # ports from CODEBOX_ADDITIONAL_PORTS. Extras use the same port number both
   # locally and on the VM (unlike the editor's separate local/remote ports).
-  forward_args=(-N -L "${CODEBOX_LOCAL_PORT}:localhost:${CODEBOX_REMOTE_PORT}")
+  # -T rather than -N: the session carries the suspend-notice tail, and -N would tell
+  # ssh to ignore the remote command entirely.
+  forward_args=(-T -L "${CODEBOX_LOCAL_PORT}:localhost:${CODEBOX_REMOTE_PORT}")
   extra_desc=""
   if [ -n "${CODEBOX_ADDITIONAL_PORTS:-}" ]; then
     IFS=',' read -ra _ports <<< "$CODEBOX_ADDITIONAL_PORTS"
@@ -213,6 +251,8 @@ EOF
     config-changed)
       codebox_info "$CODEBOX_ENV_FILE changed — reopening the tunnel with the new settings."
       codebox_reload "$@" ;;
+    suspending)
+      codebox_ask_reconnect ANNOUNCED || exit 0 ;;
     dropped)
       # The status query is what tells suspend/stop apart from a plain network drop.
       status="$(codebox_instance_status || true)"

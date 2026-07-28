@@ -18,8 +18,13 @@ is structured so more can be added. See `README.md` for the full model.
   Every other script in `scripts/gcp/` sources it.
 - `scripts/gcp/*.sh` — GCP-specific commands (create/start/stop/connect/ssh/status/bootstrap/destroy).
 - `vm/` — provider-agnostic files copied to and executed **on the VM** (`bootstrap.sh`,
-  `idle-shutdown.sh`, `systemd/`, and the GitHub-access helpers `gh-app-token.sh`,
-  `git-credential-codebox.sh`, `gh-shim.sh`, installed into `~/.local/bin`).
+  `idle-shutdown.sh`, `pre-suspend.sh`, `systemd/`, and the GitHub-access helpers
+  `gh-app-token.sh`, `git-credential-codebox.sh`, `gh-shim.sh`, installed into
+  `~/.local/bin`).
+- The VM warns connected clients before suspending by appending to `/run/codebox/notices`;
+  `connect` reads it through a `tail -F` carried on the tunnel's own SSH session. Anything
+  added to that channel has to stay silent when idle — traffic on port 22 is what the idle
+  timer measures, so a chatty channel would stop the box ever suspending.
 - `VERSION` / `packaging/` / `Formula/` / `.github/workflows/release.yml` — the release
   process. Bumping `VERSION` on `main` is what publishes a release; see the Releasing
   section of `README.md`. Anything a user needs at runtime must be listed in

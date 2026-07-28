@@ -284,6 +284,12 @@ fi
 log "Enabling code-server service ..."
 sudo systemctl enable --now "code-server@${USER}"
 
+# --- suspend notice ------------------------------------------------------
+# Installed even when the idle timer is off: `codebox suspend` uses it too, so a
+# manual suspend also gets to warn connected clients.
+log "Installing the pre-suspend client notice ..."
+sudo install -m 0755 "$HERE/pre-suspend.sh" /usr/local/bin/codebox-pre-suspend
+
 # --- idle shutdown -------------------------------------------------------
 if [ "$IDLE_TIMEOUT_MIN" -gt 0 ]; then
   log "Installing idle-shutdown timer (timeout ${IDLE_TIMEOUT_MIN} min) ..."
@@ -296,6 +302,9 @@ LOAD_THRESHOLD=0.4
 # Traffic below this rate counts as idle. A parked code-server tab heartbeats at
 # roughly 11 KB/min, so this sits well above the noise and below real interaction.
 TRAFFIC_KB_PER_MIN=50
+# Seconds to wait after warning connected clients, so they can close their tunnels
+# before RAM freezes. Capped hard — a client that has gone away must not delay a suspend.
+SUSPEND_GRACE_SEC=5
 EOF
   sudo cp "$HERE/systemd/codebox-idle-shutdown.service" /etc/systemd/system/
   sudo cp "$HERE/systemd/codebox-idle-shutdown.timer"   /etc/systemd/system/

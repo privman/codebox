@@ -5,6 +5,9 @@
 # calling the Compute API on this instance itself, authenticated with the metadata
 # service-account token (requires the compute scope + compute.instances.suspend).
 #
+# Before suspending it runs codebox-pre-suspend, which gives any connected client a
+# few seconds to close its tunnel cleanly (see vm/pre-suspend.sh).
+#
 # "Idle" means, for IDLE_TIMEOUT_MIN consecutive minutes, BOTH of:
 #   - SSH + code-server connections moving less than TRAFFIC_KB_PER_MIN,
 #   - 1-minute load average below LOAD_THRESHOLD (protects running builds/tasks).
@@ -108,6 +111,14 @@ name="$(curl -s -H "$hdr" "$md/instance/name" 2>/dev/null || true)"
 if [ -z "$token" ] || [ -z "$project" ] || [ -z "$zone" ] || [ -z "$name" ]; then
   logger -t codebox-idle "could not read metadata/token; not suspending (will retry next cycle)"
   exit 0
+fi
+
+# Metadata is good and we are definitely suspending: tell any connected clients first
+# so they can close their tunnels, instead of having the connection cut from under them
+# when RAM freezes. Best-effort — never let this stop the suspend.
+if [ -x /usr/local/bin/codebox-pre-suspend ]; then
+  /usr/local/bin/codebox-pre-suspend "${SUSPEND_GRACE_SEC:-5}" || \
+    logger -t codebox-idle "pre-suspend notice failed; suspending anyway"
 fi
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $token" \

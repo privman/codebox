@@ -156,6 +156,22 @@ codebox_instance_status() {
   return 1
 }
 
+# Poll until the instance leaves a transitional state, so the next API call doesn't race
+# it — resuming an instance that is still SUSPENDING is rejected. Echoes the settled
+# status; returns non-zero (with the last status seen) if it never settles.
+codebox_wait_for_settled() {
+  local i status=""
+  for i in $(seq 1 60); do   # ~5 minutes at 5s a go
+    status="$(codebox_instance_status || true)"
+    case "$status" in
+      PROVISIONING|STAGING|STOPPING|SUSPENDING|REPAIRING) sleep 5 ;;
+      *) printf '%s' "$status"; return 0 ;;
+    esac
+  done
+  printf '%s' "$status"
+  return 1
+}
+
 # Bring the instance up to RUNNING from whatever state it's in: resume if it's
 # SUSPENDED (restoring running processes), otherwise start. No-op if already RUNNING.
 codebox_start_or_resume() {

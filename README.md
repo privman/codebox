@@ -159,7 +159,10 @@ Reconnect? [Y/n]
 
 Answering yes resumes the VM and reopens the tunnel; `n` (or `Ctrl-D`) exits. You get the
 same offer if the tunnel drops for any other reason, with the message saying which case it
-is. While the tunnel is up, `connect` also watches the config file it loaded and reopens the
+is. When the suspend is the VM's own idle timer (or a `codebox suspend` from elsewhere),
+the VM warns first and `connect` closes the tunnel itself, so the exchange is a clean
+handshake rather than a connection dying mid-flight — see
+[Auto-suspend on idle](#auto-suspend-on-idle). While the tunnel is up, `connect` also watches the config file it loaded and reopens the
 tunnel whenever you save a change — that's how a
 [`CODEBOX_ADDITIONAL_PORTS`](#accessing-a-dev-server-running-in-the-box) edit takes effect.
 
@@ -460,7 +463,9 @@ codebox ssh -- -N -L 8000:localhost:8000
   [Giving the agent access to a private repo](#giving-the-agent-access-to-a-private-repo)
 - **your project**, if `CODEBOX_REPO` is set — cloned into the home directory and opened as
   code-server's default folder (see [Cloning your project into the box](#cloning-your-project-into-the-box))
-- **codebox idle auto-suspend** systemd timer
+- **codebox idle auto-suspend** systemd timer, plus `/usr/local/bin/codebox-pre-suspend`,
+  which warns connected clients before a suspend (installed even when the timer is off,
+  since `codebox suspend` uses it too)
 
 No language runtime is installed by default. Debian 12 already ships Python 3, which covers
 Python projects; install anything else you need per project (or extend `vm/bootstrap.sh`).
@@ -491,8 +496,24 @@ save or a page load clears the threshold immediately. Both values live in
 
 Suspend freezes RAM to disk, so on the next `codebox connect` the VM **resumes** with your
 processes still running — dev servers, Claude Code sessions, shells — right where you left them.
-A `codebox connect` that was open when this happens notices the tunnel close, reports the
-suspend, and offers to resume and reconnect on the spot (see [Quick start](#quick-start)).
+Since idleness is judged on traffic, a `codebox connect` you left open is exactly the case
+this catches — so the VM warns its clients before it goes:
+
+1. The timer decides to suspend and appends a line to `/run/codebox/notices`.
+2. Every connected `codebox connect` sees it. The tunnel's own SSH session is tailing that
+   file, so the warning arrives on the connection you already have — no extra port, no
+   listener on your laptop, and nothing on the wire until there is something to say (which
+   matters, because a chatty channel would register as traffic and keep the box awake).
+3. Each client closes its tunnel from its end and offers to reconnect.
+4. The VM waits up to `SUSPEND_GRACE_SEC` (default 5) for those connections to go, then
+   suspends.
+
+The result is that `ssh` exits cleanly instead of discovering mid-write that its connection
+has been frozen, which is where the wall of errors used to come from. The wait is strictly
+bounded: a client that is wedged or already gone cannot delay the suspend. `codebox suspend`
+runs the same hook (`/usr/local/bin/codebox-pre-suspend`) over ssh before calling the API,
+so a manual suspend is just as polite; a suspend from the GCP console bypasses it, and the
+client falls back to reporting the drop after the fact.
 The VM triggers this on itself via the Compute API (using its metadata service-account token),
 which is why the instance is created with the `compute` scope; the service account needs
 `compute.instances.suspend` (the default Compute Engine SA has it). If the suspend call ever
