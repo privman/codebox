@@ -44,6 +44,7 @@ _codebox_load_env
 : "${CODEBOX_GITHUB_BOT_NAME:=}"
 : "${CODEBOX_GITHUB_BOT_USER_ID:=}"
 : "${CODEBOX_GITHUB_TOKEN_FILE:=}"
+: "${CODEBOX_GITHUB_WRITE_REPOS:=}"
 : "${CODEBOX_GIT_AGENT_NAME:=}"
 : "${CODEBOX_GIT_AGENT_EMAIL:=}"
 
@@ -118,6 +119,22 @@ codebox_validate_github() {
     case "$CODEBOX_GITHUB_BOT_USER_ID" in
       *[!0-9]*) codebox_die "CODEBOX_GITHUB_BOT_USER_ID must be the bot's numeric user id (not the app id); got '$CODEBOX_GITHUB_BOT_USER_ID'." ;;
     esac
+  fi
+
+  # Each entry has to be owner/name: it is matched against what git and gh report, and a
+  # near-miss would silently downgrade the agent to read-only on the repo it needs to push.
+  if [ -n "$CODEBOX_GITHUB_WRITE_REPOS" ]; then
+    local IFS=','   # restored when this function returns
+    for v in $CODEBOX_GITHUB_WRITE_REPOS; do
+      v="${v//[[:space:]]/}"
+      [ -n "$v" ] || continue
+      case "$v" in
+        *[!A-Za-z0-9._/-]*) codebox_die "CODEBOX_GITHUB_WRITE_REPOS has characters that are not valid in a repository: '$v'" ;;
+        */*/*|/*|*/)        codebox_die "CODEBOX_GITHUB_WRITE_REPOS entries must be owner/name; got '$v'" ;;
+        */*)                ;;
+        *)                  codebox_die "CODEBOX_GITHUB_WRITE_REPOS entries must be owner/name; got '$v'" ;;
+      esac
+    done
   fi
 
   # These reach the box inside a single-quoted command, so reject quoting breakers.

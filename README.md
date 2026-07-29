@@ -307,6 +307,7 @@ The first of these that exists wins:
 | `CODEBOX_GITHUB_BOT_NAME` | *(looked up)*    | Bot login, e.g. `codebox-agent[bot]`                |
 | `CODEBOX_GITHUB_BOT_USER_ID` | *(looked up)* | Bot's **user** id (not the app id)                  |
 | `CODEBOX_GITHUB_TOKEN_FILE` | *(empty)*      | Path on your laptop to a file holding a fine-grained PAT (option B) |
+| `CODEBOX_GITHUB_WRITE_REPOS` | *(empty)*     | Comma-separated `owner/name` the agent may write to; everything else is read-only |
 | `CODEBOX_GIT_AGENT_NAME`  | *(from the app)* | Author/committer name for Claude Code's commits     |
 | `CODEBOX_GIT_AGENT_EMAIL` | *(from the app)* | Author/committer email for Claude Code's commits    |
 | `CODEBOX_DOCKER_IMAGE`    | `codebox:local`  | `--provider docker`: image tag built by `create`    |
@@ -439,6 +440,40 @@ becomes bounded by the server rather than by the agent's good behaviour.
 
 **If something 401s**, the cached token may be stale (e.g. you just reinstalled the app):
 `rm ~/.cache/codebox/gh-token` forces a fresh one.
+
+### Scoping what the agent can write
+
+By default the agent's tokens are as broad as the App's installation. `CODEBOX_GITHUB_WRITE_REPOS`
+narrows them per call, so a single App installed across an org can give the agent push access to
+one project and read-only access to everything else:
+
+```bash
+# in codebox.env
+CODEBOX_GITHUB_WRITE_REPOS="privman/tasklick"
+```
+
+Install the App on **All repositories** with the write permissions you want (Contents: R/W,
+Pull requests: R/W, Metadata: Read). codebox then mints two kinds of token:
+
+- **a listed repo** — `repositories: [that repo]` and no `permissions` override, so the token
+  keeps the App's full grants but reaches only that repository;
+- **anything else** — `permissions: {contents: read, metadata: read}` across every installed
+  repository.
+
+GitHub enforces both: `repositories` and `permissions` on a token request can only reduce what
+the installation already grants, never extend it. Measured against a live App, a write-scoped
+token creates a blob in its own repo (201), is refused on another (403 for a read-only token,
+404 — invisible — for a write-scoped one).
+
+This needs `credential.useHttpPath`, which bootstrap turns on for github.com: without it git
+sends only the hostname and the helper cannot tell which repository it is being asked about.
+It therefore applies to **https remotes only** — an ssh remote never consults the credential
+helper. `gh` is covered too: the shim reads `-R/--repo`, falling back to the checkout you are
+standing in.
+
+> **This is self-restriction until you add the privilege split.** The `.pem` lives in the box,
+> so anything running there can call the API directly and mint a full token. See
+> [Keeping the key away from the agent](#keeping-the-key-away-from-the-agent).
 
 ### Option B — fine-grained PAT (quick)
 

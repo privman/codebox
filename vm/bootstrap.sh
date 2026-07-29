@@ -12,6 +12,7 @@ GH_APP_ID="${CODEBOX_GITHUB_APP_ID:-}"
 GH_APP_INSTALL_ID="${CODEBOX_GITHUB_APP_INSTALLATION_ID:-}"
 GH_BOT_NAME="${CODEBOX_GITHUB_BOT_NAME:-}"
 GH_BOT_USER_ID="${CODEBOX_GITHUB_BOT_USER_ID:-}"
+GH_WRITE_REPOS="${CODEBOX_GITHUB_WRITE_REPOS:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\033[1;32m[codebox]\033[0m %s\n' "$*"; }
@@ -144,6 +145,9 @@ if [ -n "$GH_APP_ID" ] && [ -n "$GH_APP_INSTALL_ID" ] && [ -f "$conf_dir/gh-app.
 APP_ID=${GH_APP_ID}
 INSTALLATION_ID=${GH_APP_INSTALL_ID}
 PEM=${conf_dir}/gh-app.pem
+# Repositories the agent may write to. Everything else the app can see is minted
+# read-only. Empty means no policy: tokens are as broad as the installation.
+WRITE_REPOS=${GH_WRITE_REPOS}
 EOF
   chmod 600 "$conf_dir/gh-app.env"
 
@@ -159,6 +163,9 @@ EOF
   # that never sourced .bashrc (and so has no ~/.local/bin on PATH).
   git config --global --unset-all "credential.https://github.com.helper" 2>/dev/null || true
   git config --global "credential.https://github.com.helper" "$bin_dir/git-credential-codebox"
+  # Without this git sends only the host, so the helper cannot tell which repository it is
+  # being asked about and every call would get the same scope.
+  git config --global "credential.https://github.com.useHttpPath" true
 
   # Resolve the bot's login and numeric user id. The id is what makes GitHub render the
   # commit as the bot — avatar and `bot` badge — instead of an unlinked name. It is the
