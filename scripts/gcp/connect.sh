@@ -214,18 +214,13 @@ while :; do
   # ssh to ignore the remote command entirely.
   forward_args=(-T -L "${CODEBOX_LOCAL_PORT}:localhost:${CODEBOX_REMOTE_PORT}")
   extra_desc=""
-  if [ -n "${CODEBOX_ADDITIONAL_PORTS:-}" ]; then
-    IFS=',' read -ra _ports <<< "$CODEBOX_ADDITIONAL_PORTS"
-    for _p in "${_ports[@]}"; do
-      _p="${_p//[[:space:]]/}"
-      [ -n "$_p" ] || continue
-      case "$_p" in
-        *[!0-9]*) codebox_die "CODEBOX_ADDITIONAL_PORTS has a non-numeric port: '$_p'" ;;
-      esac
-      forward_args+=(-L "${_p}:localhost:${_p}")
-      extra_desc="${extra_desc} ${_p}"
-    done
-  fi
+  # Plain assignment, not `local`: a rejected port has to propagate out of the
+  # substitution and stop us here (see codebox_additional_ports).
+  extra_ports="$(codebox_additional_ports)"
+  for _p in $extra_ports; do
+    forward_args+=(-L "${_p}:localhost:${_p}")
+    extra_desc="${extra_desc} ${_p}"
+  done
 
   cat >&2 <<EOF
 

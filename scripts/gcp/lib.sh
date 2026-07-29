@@ -1,121 +1,25 @@
 #!/usr/bin/env bash
-# Shared configuration and helpers for the codebox scripts.
-# Sourced by every script in this directory.
+# GCP-specific configuration and helpers.
+# Sourced by every script in this directory; the provider-agnostic half lives in
+# ../common.sh.
 set -euo pipefail
 
 CODEBOX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Repo root is two levels up: scripts/gcp/ -> scripts/ -> repo root.
-CODEBOX_ROOT="$(cd "${CODEBOX_SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../common.sh
+. "$CODEBOX_SCRIPT_DIR/../common.sh"
 
-# --- load config ---------------------------------------------------------
-# Priority: $CODEBOX_ENV, ./codebox.env, <repo>/codebox.env, ~/.config/codebox/codebox.env.
-# The last one is the fallback for installs from Homebrew or apt, where CODEBOX_ROOT is a
-# read-only system directory and there is no checkout to keep a config in.
-_codebox_load_env() {
-  local candidate
-  for candidate in "${CODEBOX_ENV:-}" "$PWD/codebox.env" "$CODEBOX_ROOT/codebox.env" \
-                   "${XDG_CONFIG_HOME:-$HOME/.config}/codebox/codebox.env"; do
-    [ -n "$candidate" ] || continue
-    if [ -f "$candidate" ]; then
-      set -a
-      # shellcheck disable=SC1090
-      . "$candidate"
-      set +a
-      CODEBOX_ENV_FILE="$candidate"
-      return 0
-    fi
-  done
-  return 0
-}
-_codebox_load_env
-
-# --- defaults ------------------------------------------------------------
+# --- GCP-only defaults ---------------------------------------------------
 : "${CODEBOX_ZONE:=us-central1-a}"
-: "${CODEBOX_INSTANCE:=codebox}"
 : "${CODEBOX_MACHINE_TYPE:=e2-standard-4}"
 : "${CODEBOX_DISK_SIZE:=50}"
 : "${CODEBOX_IMAGE_FAMILY:=debian-12}"
 : "${CODEBOX_IMAGE_PROJECT:=debian-cloud}"
 : "${CODEBOX_NETWORK_TAG:=codebox}"
-: "${CODEBOX_LOCAL_PORT:=8080}"
-: "${CODEBOX_REMOTE_PORT:=8080}"
-: "${CODEBOX_ADDITIONAL_PORTS:=}"
-: "${CODEBOX_IDLE_TIMEOUT_MIN:=30}"
-: "${CODEBOX_REPO:=}"
-: "${CODEBOX_GITHUB_APP_ID:=}"
-: "${CODEBOX_GITHUB_APP_INSTALLATION_ID:=}"
-: "${CODEBOX_GITHUB_APP_KEY:=}"
-: "${CODEBOX_GITHUB_BOT_NAME:=}"
-: "${CODEBOX_GITHUB_BOT_USER_ID:=}"
-: "${CODEBOX_GITHUB_TOKEN_FILE:=}"
-: "${CODEBOX_GIT_AGENT_NAME:=}"
-: "${CODEBOX_GIT_AGENT_EMAIL:=}"
 : "${CODEBOX_ALLOW_FIREWALL_RULE:=codebox-allow-iap-ssh}"
 : "${CODEBOX_DENY_FIREWALL_RULE:=codebox-deny-ssh}"
 
 # IAP's TCP-forwarding source range. Fixed by Google.
 CODEBOX_IAP_RANGE="35.235.240.0/20"
-
-# --- helpers -------------------------------------------------------------
-codebox_die()  { printf 'codebox: %s\n' "$*" >&2; exit 1; }
-codebox_info() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
-codebox_warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
-
-# Sanity-check CODEBOX_REPO before we spend minutes creating a VM. The actual URI
-# handling (and the clone) happens on the VM in vm/bootstrap.sh; here we only reject
-# shapes git wouldn't accept and characters that would break the quoting of the
-# remote bootstrap command (and are never valid in a git URI anyway).
-codebox_validate_repo() {
-  [ -n "${CODEBOX_REPO:-}" ] || return 0
-  case "$CODEBOX_REPO" in
-    *[[:space:]\'\"\`\$\\\;\&\|\<\>\(\)]*)
-      codebox_die "CODEBOX_REPO contains characters that aren't valid in a git URI: $CODEBOX_REPO" ;;
-  esac
-  case "$CODEBOX_REPO" in
-    https://*/*|http://*/*|ssh://*/*|*@*:*) return 0 ;;
-    *) codebox_die "CODEBOX_REPO must be an https or ssh git URI (e.g. 'https://github.com/owner/repo' or 'git@github.com:owner/repo'); got: $CODEBOX_REPO" ;;
-  esac
-}
-
-# Check the GitHub-access config before we start copying secrets around. The two options
-# (a GitHub App, or a fine-grained PAT in a file) are mutually exclusive: each configures
-# git and gh differently on the VM, and quietly preferring one would be a nasty surprise.
-codebox_validate_github() {
-  local v
-  if [ -n "$CODEBOX_GITHUB_APP_KEY" ] && [ -n "$CODEBOX_GITHUB_TOKEN_FILE" ]; then
-    codebox_die "set either the CODEBOX_GITHUB_APP_* variables or CODEBOX_GITHUB_TOKEN_FILE, not both."
-  fi
-
-  if [ -n "$CODEBOX_GITHUB_APP_ID$CODEBOX_GITHUB_APP_INSTALLATION_ID$CODEBOX_GITHUB_APP_KEY" ]; then
-    [ -n "$CODEBOX_GITHUB_APP_ID" ] || codebox_die "CODEBOX_GITHUB_APP_ID is required for GitHub App access."
-    [ -n "$CODEBOX_GITHUB_APP_INSTALLATION_ID" ] || codebox_die "CODEBOX_GITHUB_APP_INSTALLATION_ID is required for GitHub App access (find it in the app's install URL)."
-    [ -n "$CODEBOX_GITHUB_APP_KEY" ] || codebox_die "CODEBOX_GITHUB_APP_KEY must point at the app's private-key .pem file on this machine."
-    for v in "$CODEBOX_GITHUB_APP_ID" "$CODEBOX_GITHUB_APP_INSTALLATION_ID"; do
-      case "$v" in
-        *[!0-9]*) codebox_die "CODEBOX_GITHUB_APP_ID and CODEBOX_GITHUB_APP_INSTALLATION_ID must be numeric; got '$v'." ;;
-      esac
-    done
-    [ -f "$CODEBOX_GITHUB_APP_KEY" ] || codebox_die "GitHub App key not found: $CODEBOX_GITHUB_APP_KEY"
-  fi
-
-  if [ -n "$CODEBOX_GITHUB_TOKEN_FILE" ]; then
-    [ -f "$CODEBOX_GITHUB_TOKEN_FILE" ] || codebox_die "GitHub token file not found: $CODEBOX_GITHUB_TOKEN_FILE"
-    [ -s "$CODEBOX_GITHUB_TOKEN_FILE" ] || codebox_die "GitHub token file is empty: $CODEBOX_GITHUB_TOKEN_FILE"
-  fi
-
-  if [ -n "$CODEBOX_GITHUB_BOT_USER_ID" ]; then
-    case "$CODEBOX_GITHUB_BOT_USER_ID" in
-      *[!0-9]*) codebox_die "CODEBOX_GITHUB_BOT_USER_ID must be the bot's numeric user id (not the app id); got '$CODEBOX_GITHUB_BOT_USER_ID'." ;;
-    esac
-  fi
-
-  # These reach the VM inside a single-quoted remote command, so reject quoting breakers.
-  for v in "$CODEBOX_GITHUB_BOT_NAME" "$CODEBOX_GIT_AGENT_NAME" "$CODEBOX_GIT_AGENT_EMAIL"; do
-    case "$v" in
-      *[\'\"\`\$\\]*) codebox_die "quotes, backslashes and \$ are not allowed in the GitHub identity settings; got '$v'." ;;
-    esac
-  done
-}
 
 codebox_check_gcloud() {
   command -v gcloud >/dev/null 2>&1 || \
