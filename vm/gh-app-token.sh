@@ -17,6 +17,14 @@ conf="${CODEBOX_GH_APP_ENV:-$HOME/.config/codebox/gh-app.env}"
 : "${PEM:=$HOME/.config/codebox/gh-app.pem}"
 [ -f "$PEM" ] || { echo "codebox-gh-token: private key $PEM not found" >&2; exit 1; }
 
+mode="${1:-}"
+case "$mode" in
+  ""|--jwt) ;;
+  # Anything else is a typo, and guessing would hand back the wrong kind of credential —
+  # exactly the failure this argument check exists to prevent.
+  *) echo "codebox-gh-token: unknown option '$mode' (expected --jwt or no argument)" >&2; exit 1 ;;
+esac
+
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/codebox"
 cache="$cache_dir/gh-token"
 mkdir -p "$cache_dir"
@@ -24,7 +32,13 @@ chmod 700 "$cache_dir"
 
 # Reuse a cached token while it still has comfortable life left. Delete the cache file
 # to force a fresh one (e.g. after revoking the installation).
-if [ -s "$cache" ]; then
+#
+# Installation tokens only. A JWT is signed locally in a millisecond and lives nine
+# minutes, so there is nothing worth caching — and answering --jwt from this cache would
+# return an installation token to a caller that asked for a JWT, which GitHub rejects
+# with a 401 on the endpoints that need one (GET /app, and so the bot-slug lookup in
+# bootstrap.sh).
+if [ "$mode" != "--jwt" ] && [ -s "$cache" ]; then
   age=$(( $(date +%s) - $(stat -c %Y "$cache" 2>/dev/null || echo 0) ))
   if [ "$age" -ge 0 ] && [ "$age" -lt 2700 ]; then
     cat "$cache"
@@ -41,7 +55,7 @@ pay="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 540))" 
 sig="$(printf '%s.%s' "$hdr" "$pay" | openssl dgst -sha256 -sign "$PEM" -binary | b64url)"
 jwt="$hdr.$pay.$sig"
 
-if [ "${1:-}" = "--jwt" ]; then
+if [ "$mode" = "--jwt" ]; then
   printf '%s\n' "$jwt"
   exit 0
 fi
