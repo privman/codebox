@@ -18,9 +18,8 @@ SELF="$(cd "$(dirname "$SOURCE")" && pwd)"
 ROOT="$(cd "$SELF/.." && pwd)"
 VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo unknown)"
 
-# Only GCP is implemented today; more providers may be added later.
 DEFAULT_PROVIDER="gcp"
-SUPPORTED_PROVIDERS="gcp"
+SUPPORTED_PROVIDERS="gcp docker"
 
 usage() {
   cat <<'EOF'
@@ -42,8 +41,9 @@ Commands:
   version    Print the codebox version
 
 Options:
-  --provider <name>   Cloud provider to target. Default: gcp
-                      (gcp is currently the only supported value)
+  --provider <name>   Where the box lives. Default: gcp
+                      gcp     a cloud VM reached over an IAP tunnel
+                      docker  a container on this machine (no idle auto-suspend)
 
 Configuration lives in codebox.env (copy codebox.env.example).
 EOF

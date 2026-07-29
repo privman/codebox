@@ -4,9 +4,10 @@ A small, self-contained toolkit for running a **cloud dev box** that you drive f
 laptop with [code-server](https://github.com/coder/code-server) (VS Code in the browser)
 and [Claude Code](https://claude.com/claude-code).
 
-> **Providers:** Google Cloud (GCP) is the only supported provider **at the moment**.
-> The CLI takes a `--provider` flag (default `gcp`) so additional providers can be added
-> later; passing anything other than `gcp` errors out as unimplemented for now.
+> **Providers:** `gcp` (the default) puts the box on a Google Cloud VM reached over an IAP
+> tunnel. `docker` puts it in a container on the machine you are sitting at — same editor,
+> same tooling, no cloud account, no idle auto-suspend. Pick one with `--provider`; see
+> [Running locally in Docker](#running-locally-in-docker).
 
 You provision a VM once, connect to it over an **IAP-tunneled SSH port-forward**, and
 edit/build inside the browser. The VM **suspends itself when idle** — freezing memory to
@@ -31,6 +32,10 @@ laptop  ──IAP TCP tunnel──▶  sshd (:22, IAP range only)  ──local f
 - **One command to come back.** `codebox connect` resumes (or starts) the VM if needed and opens the tunnel.
 
 ## Prerequisites
+
+For the **docker** provider, all you need is a working Docker install — skip to
+[Running locally in Docker](#running-locally-in-docker). The rest of this section is the
+**gcp** provider.
 
 On your **laptop**:
 
@@ -166,6 +171,79 @@ handshake rather than a connection dying mid-flight — see
 tunnel whenever you save a change — that's how a
 [`CODEBOX_ADDITIONAL_PORTS`](#accessing-a-dev-server-running-in-the-box) edit takes effect.
 
+## Running locally in Docker
+
+Same box, same tooling, no cloud account: `--provider docker` builds an image, runs a
+container on this machine, and installs code-server, Claude Code and your repo into it with
+the *same* `vm/bootstrap.sh` the VM uses. Useful for trying codebox out, for working
+offline, or when a box does not need to outlive your laptop.
+
+```bash
+# 1. Configure (CODEBOX_PROJECT is not needed for this provider)
+cp codebox.env.example codebox.env
+$EDITOR codebox.env                       # CODEBOX_REPO, ports, GitHub access if you want them
+
+# 2. Build the image, create the container, install the tooling (a few minutes)
+codebox --provider docker create
+
+# 3. Print the editor URL and password
+codebox --provider docker connect
+#    -> browse to http://localhost:8080
+
+# ... and when you are done
+codebox --provider docker stop
+```
+
+The provider is per-invocation — there is no config key for it — so pass `--provider docker`
+each time, or alias it: `alias dbox='codebox --provider docker'`.
+
+**How it differs from the GCP provider:**
+
+| | `gcp` | `docker` |
+| --- | --- | --- |
+| Reaching the editor | SSH port-forward over an IAP tunnel | Docker publishes the port to `127.0.0.1` |
+| `codebox connect` | blocks, holding the tunnel | prints the URL and exits; the box keeps running |
+| Idle auto-suspend | on, after `CODEBOX_IDLE_TIMEOUT_MIN` | **off** — a local container costs nothing to leave up |
+| `codebox suspend` | freezes RAM to disk | `docker pause` — freezes the processes in place |
+| `codebox stop` | shuts the VM down | stops the container; the filesystem survives |
+| `codebox ssh` | SSH over IAP | `docker exec` a login shell |
+| Extra ports | re-forwarded when you edit the config | fixed when the container is created (see below) |
+
+**Idle auto-suspend is deliberately disabled here.** It exists to stop a cloud VM billing
+you for sitting still; locally there is nothing to save, and the timer needs systemd, which
+the container does not run. `codebox bootstrap` skips installing it and pins
+`CODEBOX_IDLE_TIMEOUT_MIN=0` for the container regardless of what your config says. Stop the
+box yourself with `codebox --provider docker stop`.
+
+**Ports are fixed at create time.** Docker cannot add a published port to an existing
+container, so editing `CODEBOX_ADDITIONAL_PORTS` does not reach a box that already exists —
+`connect` compares the two and tells you when they have drifted. To apply the change:
+
+```bash
+codebox --provider docker destroy && codebox --provider docker create
+```
+
+That loses everything inside the container, so commit and push first.
+
+**Docker-only settings:**
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `CODEBOX_DOCKER_IMAGE` | `codebox:local` | Image tag built by `create` |
+| `CODEBOX_DOCKER_USER` | `coder` | Login user inside the box |
+| `CODEBOX_DOCKER_BIND` | `127.0.0.1` | Host interface the ports are published on |
+
+`CODEBOX_INSTANCE` names the container, so several boxes can coexist the same way they do
+on GCP (see [Running multiple codeboxes](#running-multiple-codeboxes)).
+
+**On exposure:** inside the container code-server binds `0.0.0.0`, because Docker's
+published port cannot reach a service listening only on the container's loopback. What
+makes it private is the publish address — `CODEBOX_DOCKER_BIND`, `127.0.0.1` by default — so
+the editor is reachable from your machine and not from your network. Point that at another
+interface and you are publishing a password-protected editor to it; that is your call to
+make deliberately. Other containers on the same Docker network can reach it either way,
+which is worth knowing if you run untrusted containers.
+
 ## Commands
 
 | Command             | Description                                                        |
@@ -181,14 +259,17 @@ tunnel whenever you save a change — that's how a
 | `codebox bootstrap` | Re-run the tooling install on an existing VM                       |
 | `codebox destroy`   | Delete the VM (and optionally the firewall rules)                  |
 
-Every command accepts an optional `--provider <name>` flag (default `gcp`). Only `gcp` is
-implemented right now; other values are rejected as unimplemented.
+Every command accepts an optional `--provider <name>` flag (default `gcp`). The table above
+describes the `gcp` provider; `docker` maps the same verbs onto a local container, with the
+differences listed in [Running locally in Docker](#running-locally-in-docker).
 
 ## Repository layout
 
 - `bin/codebox` — provider-agnostic CLI; parses `--provider` and dispatches to a provider's scripts.
+- `scripts/common.sh` — config loading, defaults and validation shared by every provider.
 - `scripts/gcp/` — all GCP-specific logic (gcloud provisioning, IAP tunnel, firewall).
-  A future provider would live alongside as `scripts/<provider>/`.
+- `scripts/docker/` — the local-container provider.
+- `docker/` — the image the container provider builds (`Dockerfile`, `entrypoint.sh`).
 - `vm/` — provider-agnostic files installed on the VM (code-server, Claude Code,
   the idle auto-suspend timer).
 - `VERSION` — the released version, and what triggers a release (see [Releasing](#releasing)).
@@ -228,6 +309,9 @@ The first of these that exists wins:
 | `CODEBOX_GITHUB_TOKEN_FILE` | *(empty)*      | Path on your laptop to a file holding a fine-grained PAT (option B) |
 | `CODEBOX_GIT_AGENT_NAME`  | *(from the app)* | Author/committer name for Claude Code's commits     |
 | `CODEBOX_GIT_AGENT_EMAIL` | *(from the app)* | Author/committer email for Claude Code's commits    |
+| `CODEBOX_DOCKER_IMAGE`    | `codebox:local`  | `--provider docker`: image tag built by `create`    |
+| `CODEBOX_DOCKER_USER`     | `coder`          | `--provider docker`: login user inside the container |
+| `CODEBOX_DOCKER_BIND`     | `127.0.0.1`      | `--provider docker`: host interface ports are published on |
 
 ## Running multiple codeboxes
 

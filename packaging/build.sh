@@ -25,7 +25,7 @@ esac
 
 # What ships. Everything a codebox install needs at runtime, and nothing that only
 # matters to someone hacking on the repo (CLAUDE.md, packaging/, .github/).
-PAYLOAD_PATHS=(bin scripts vm VERSION codebox.env.example README.md)
+PAYLOAD_PATHS=(bin scripts vm docker .dockerignore VERSION codebox.env.example README.md)
 
 DIST="$ROOT/dist"
 rm -rf "$DIST"

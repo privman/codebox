@@ -1,0 +1,11 @@
+# The Docker build context is the codebox root (that is where the Dockerfile expects
+# docker/entrypoint.sh to be). The image needs almost nothing from it, so keep the
+# context small — and, more importantly, keep local secrets out of it entirely: the
+# whole context is handed to the Docker daemon even when the Dockerfile never copies it.
+.git
+dist
+vendor
+*.pem
+*.key
+codebox*.env
+!codebox.env.example

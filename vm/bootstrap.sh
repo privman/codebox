@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs ON the VM (as the login user, which has passwordless sudo on GCP images).
-# Installs Claude Code, code-server, and the idle-shutdown timer.
+# Runs INSIDE the box — a GCP VM or a local Docker container — as the login user, which
+# has passwordless sudo on GCP images and in the codebox image.
+# Installs Claude Code, code-server, GitHub access, and (on a VM) the idle-shutdown timer.
 # Idempotent: safe to re-run.
 set -euo pipefail
 
@@ -14,6 +15,16 @@ GH_BOT_USER_ID="${CODEBOX_GITHUB_BOT_USER_ID:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\033[1;32m[codebox]\033[0m %s\n' "$*"; }
+
+# The same script bootstraps a GCP VM and a local Docker container. The container has no
+# systemd (code-server is run by the image's entrypoint instead) and nothing to suspend,
+# so the pieces built on those are skipped there rather than failing halfway.
+if [ -f /.dockerenv ] || [ -n "${CODEBOX_CONTAINER:-}" ]; then
+  IN_CONTAINER=1
+else
+  IN_CONTAINER=0
+fi
+in_container() { [ "$IN_CONTAINER" = 1 ]; }
 
 # --- base packages -------------------------------------------------------
 log "Updating apt and installing base packages ..."
@@ -63,13 +74,17 @@ if ! command -v code-server >/dev/null 2>&1; then
   curl -fsSL https://code-server.dev/install.sh | sh
 fi
 
-log "Configuring code-server (127.0.0.1:${REMOTE_PORT}) ..."
+# In a container, code-server has to listen on all interfaces or Docker's published
+# port cannot reach it. That is not an exposure: `codebox create` publishes the port to
+# the host's loopback only, and the password still applies.
+if in_container; then BIND_ADDR="0.0.0.0"; else BIND_ADDR="127.0.0.1"; fi
+log "Configuring code-server (${BIND_ADDR}:${REMOTE_PORT}) ..."
 mkdir -p "$HOME/.config/code-server"
 config="$HOME/.config/code-server/config.yaml"
 if [ ! -f "$config" ]; then
   password="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"
   cat > "$config" <<EOF
-bind-addr: 127.0.0.1:${REMOTE_PORT}
+bind-addr: ${BIND_ADDR}:${REMOTE_PORT}
 auth: password
 password: ${password}
 cert: false
@@ -78,7 +93,7 @@ EOF
   log "Generated a code-server password (stored in $config)."
 else
   # Keep the existing password; just make sure the bind address is right.
-  sed -i "s|^bind-addr:.*|bind-addr: 127.0.0.1:${REMOTE_PORT}|" "$config"
+  sed -i "s|^bind-addr:.*|bind-addr: ${BIND_ADDR}:${REMOTE_PORT}|" "$config"
   log "Kept existing code-server config."
 fi
 
@@ -281,17 +296,33 @@ if [ -n "$REPO" ]; then
   fi
 fi
 
-log "Enabling code-server service ..."
-sudo systemctl enable --now "code-server@${USER}"
+if in_container; then
+  # The image's entrypoint runs code-server and picks it up within a few seconds of
+  # this install finishing, so there is no unit to enable.
+  log "Container: code-server is started by the entrypoint."
+else
+  log "Enabling code-server service ..."
+  sudo systemctl enable --now "code-server@${USER}"
+fi
 
 # --- suspend notice ------------------------------------------------------
 # Installed even when the idle timer is off: `codebox suspend` uses it too, so a
 # manual suspend also gets to warn connected clients.
-log "Installing the pre-suspend client notice ..."
-sudo install -m 0755 "$HERE/pre-suspend.sh" /usr/local/bin/codebox-pre-suspend
+if in_container; then
+  # `codebox suspend` on Docker is `docker pause`, which freezes the container without
+  # touching the published port — there is no tunnel to warn anyone about.
+  log "Container: skipping the pre-suspend client notice (nothing to disconnect)."
+else
+  log "Installing the pre-suspend client notice ..."
+  sudo install -m 0755 "$HERE/pre-suspend.sh" /usr/local/bin/codebox-pre-suspend
+fi
 
 # --- idle shutdown -------------------------------------------------------
-if [ "$IDLE_TIMEOUT_MIN" -gt 0 ]; then
+if in_container; then
+  # Idle auto-suspend is a cloud-billing feature: a stopped container costs nothing and
+  # the timer needs systemd anyway. Local boxes stay up until you stop them.
+  log "Container: idle auto-suspend does not apply; use 'codebox stop' when you are done."
+elif [ "$IDLE_TIMEOUT_MIN" -gt 0 ]; then
   log "Installing idle-shutdown timer (timeout ${IDLE_TIMEOUT_MIN} min) ..."
   sudo install -m 0755 "$HERE/idle-shutdown.sh" /usr/local/bin/codebox-idle-shutdown
   sudo tee /etc/codebox-idle.conf >/dev/null <<EOF
