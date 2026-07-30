@@ -20,13 +20,44 @@ shutdown() {
 trap shutdown TERM INT
 
 export PATH="$HOME/.local/bin:$PATH"
+
+# With the uid split on, code-server is the agent's process — it and every terminal it
+# opens must not be this (sudo-capable) user. Passed in at `docker run` so it survives a
+# restart, when this entrypoint is all that brings the editor back.
+AGENT_USER="${CODEBOX_AGENT_USER:-}"
+start_code_server() {
+  if [ -n "$AGENT_USER" ] && [ "$AGENT_USER" != "$(id -un)" ]; then
+    sudo -n -H -u "$AGENT_USER" code-server &
+  else
+    code-server &
+  fi
+}
+
 echo "[codebox] entrypoint started; waiting for code-server ..."
 
+# Where bootstrap-user.sh writes the editor config, as whichever user owns the editor.
+# Resolved per iteration, not once: on a first boot this entrypoint is running before
+# bootstrap has created the agent user, so the home directory cannot be looked up yet.
+config_path() {
+  local home=""
+  if [ -n "$AGENT_USER" ]; then
+    home="$(getent passwd "$AGENT_USER" | cut -d: -f6)"
+    [ -n "$home" ] || return 1
+  else
+    home="$HOME"
+  fi
+  printf '%s/.config/code-server/config.yaml' "$home"
+}
+
 while :; do
-  if command -v code-server >/dev/null 2>&1; then
+  CONFIG="$(config_path || true)"
+  # Wait for the config as well as the binary. Starting code-server first would have it
+  # write its own default config, which bootstrap then treats as one to preserve — so the
+  # box would come up with a password codebox never chose.
+  if command -v code-server >/dev/null 2>&1 && [ -f "$CONFIG" ]; then
     # Configuration (bind address, password) comes from ~/.config/code-server/config.yaml,
     # which bootstrap.sh writes.
-    code-server &
+    start_code_server
     CHILD=$!
     wait "$CHILD" || true
     CHILD=""

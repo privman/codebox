@@ -7,6 +7,7 @@ set -euo pipefail
 codebox_check_docker
 codebox_validate_repo
 codebox_validate_github
+codebox_validate_agent_user
 
 state="$(codebox_container_state)"
 if [ -n "$state" ]; then
@@ -33,9 +34,12 @@ while IFS= read -r spec; do
 done <<< "$(codebox_publish_args)"
 
 codebox_info "Creating container '$CODEBOX_INSTANCE' ..."
+# The agent user reaches the entrypoint through the container's environment, so it is still
+# there after a `docker start` — the entrypoint is what restarts the editor.
 docker run -d \
   --name "$CODEBOX_INSTANCE" \
   --hostname codebox \
+  -e "CODEBOX_AGENT_USER=$CODEBOX_AGENT_USER" \
   "${publish_args[@]}" \
   "$CODEBOX_DOCKER_IMAGE" >/dev/null
 

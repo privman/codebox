@@ -32,8 +32,11 @@ codebox_info "Waiting for code-server ..."
 codebox_wait_for_editor || \
   codebox_die "code-server did not come up in the box. Check 'docker logs $CODEBOX_INSTANCE'."
 
-password="$(codebox_docker_exec awk '/^password:/{print $2; exit}' \
-  "$CODEBOX_DOCKER_HOME/.config/code-server/config.yaml" 2>/dev/null || true)"
+# Read as root: with the uid split on this file belongs to the agent, and the login user
+# has no business reading into that home.
+password="$(docker exec -u root "$CODEBOX_INSTANCE" \
+  awk '/^password:/{print $2; exit}' \
+  "$CODEBOX_BOX_HOME/.config/code-server/config.yaml" 2>/dev/null || true)"
 
 cat >&2 <<EOF
 

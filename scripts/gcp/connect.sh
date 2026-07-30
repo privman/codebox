@@ -204,8 +204,15 @@ while :; do
   fi
 
   codebox_info "Fetching code-server password ..."
+  # With the uid split on the editor config belongs to the agent user, so it takes sudo to
+  # read from the login user's session.
+  if [ -n "${CODEBOX_AGENT_USER:-}" ]; then
+    pw_command="sudo awk '/^password:/{print \$2; exit}' /home/${CODEBOX_AGENT_USER}/.config/code-server/config.yaml"
+  else
+    pw_command="awk '/^password:/{print \$2; exit}' ~/.config/code-server/config.yaml"
+  fi
   password="$(codebox_gcloud compute ssh "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" --tunnel-through-iap \
-    --command="awk '/^password:/{print \$2; exit}' ~/.config/code-server/config.yaml" 2>/dev/null || true)"
+    --command="$pw_command" 2>/dev/null || true)"
 
   # Build the SSH port-forward flags: the editor port first, then any extra dev-server
   # ports from CODEBOX_ADDITIONAL_PORTS. Extras use the same port number both

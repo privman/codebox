@@ -45,6 +45,7 @@ _codebox_load_env
 : "${CODEBOX_GITHUB_BOT_USER_ID:=}"
 : "${CODEBOX_GITHUB_TOKEN_FILE:=}"
 : "${CODEBOX_GITHUB_WRITE_REPOS:=}"
+: "${CODEBOX_AGENT_USER:=}"
 : "${CODEBOX_GIT_AGENT_NAME:=}"
 : "${CODEBOX_GIT_AGENT_EMAIL:=}"
 
@@ -71,6 +72,20 @@ codebox_additional_ports() {
     esac
     printf '%s\n' "$port"
   done
+}
+
+# CODEBOX_AGENT_USER becomes a unix account inside the box, so reject anything useradd
+# would refuse before we are halfway through a bootstrap. codebox-git is ours.
+codebox_validate_agent_user() {
+  [ -n "${CODEBOX_AGENT_USER:-}" ] || return 0
+  case "$CODEBOX_AGENT_USER" in
+    codebox-git|root) codebox_die "CODEBOX_AGENT_USER cannot be '$CODEBOX_AGENT_USER'; it is reserved." ;;
+    [a-z_]*) ;;
+    *) codebox_die "CODEBOX_AGENT_USER must start with a letter or underscore; got '$CODEBOX_AGENT_USER'." ;;
+  esac
+  case "$CODEBOX_AGENT_USER" in
+    *[!a-z0-9_-]*) codebox_die "CODEBOX_AGENT_USER must be a lowercase unix username; got '$CODEBOX_AGENT_USER'." ;;
+  esac
 }
 
 # Sanity-check CODEBOX_REPO before we spend minutes building a box. The actual URI

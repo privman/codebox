@@ -29,7 +29,13 @@ die() { echo "codebox-gh-token: $*" >&2; exit 1; }
 # CODEBOX_GH_APP_ENV lets a test point this at another config. It is deliberately ignored
 # when running as another user (the privilege-separated setup, where the caller is the
 # agent and must not be able to redirect us at a key or app of its choosing).
-conf="$HOME/.config/codebox/gh-app.env"
+# The privilege-separated install puts the config somewhere root owns and the agent cannot
+# edit; a single-uid box keeps it in the user's home. Prefer the former when it exists.
+if [ -f /etc/codebox/gh-app.env ]; then
+  conf=/etc/codebox/gh-app.env
+else
+  conf="$HOME/.config/codebox/gh-app.env"
+fi
 if [ -n "${CODEBOX_GH_APP_ENV:-}" ]; then
   [ -z "${SUDO_USER:-}" ] || die "CODEBOX_GH_APP_ENV is not honoured under sudo"
   conf="$CODEBOX_GH_APP_ENV"

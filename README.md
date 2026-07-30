@@ -313,6 +313,7 @@ The first of these that exists wins:
 | `CODEBOX_GITHUB_BOT_USER_ID` | *(looked up)* | Bot's **user** id (not the app id)                  |
 | `CODEBOX_GITHUB_TOKEN_FILE` | *(empty)*      | Path on your laptop to a file holding a fine-grained PAT (option B) |
 | `CODEBOX_GITHUB_WRITE_REPOS` | *(empty)*     | Comma-separated `owner/name` the agent may write to; everything else is read-only |
+| `CODEBOX_AGENT_USER`      | *(empty)*        | Run the agent as this unprivileged user, with the App key behind a third account |
 | `CODEBOX_GIT_AGENT_NAME`  | *(from the app)* | Author/committer name for Claude Code's commits     |
 | `CODEBOX_GIT_AGENT_EMAIL` | *(from the app)* | Author/committer email for Claude Code's commits    |
 | `CODEBOX_DOCKER_IMAGE`    | `codebox:local`  | `--provider docker`: image tag built by `create`    |
@@ -479,6 +480,55 @@ standing in.
 > **This is self-restriction until you add the privilege split.** The `.pem` lives in the box,
 > so anything running there can call the API directly and mint a full token. See
 > [Keeping the key away from the agent](#keeping-the-key-away-from-the-agent).
+
+### Keeping the key away from the agent
+
+The scoping above is enforced by GitHub, but *asking* for a narrow token is voluntary: the
+App key sits in the box, so anything running there can call the API itself and mint a broad
+one. `CODEBOX_AGENT_USER` closes that by giving the box three unix accounts instead of one:
+
+```bash
+# in codebox.env
+CODEBOX_AGENT_USER="agent"
+```
+
+| account | runs | holds |
+| --- | --- | --- |
+| your login user | nothing — you, over `codebox ssh` | sudo |
+| `agent` | code-server, Claude Code, every editor terminal | no sudo, one sudoers rule |
+| `codebox-git` | the token minter, on demand | the App key, mode 0600 |
+
+The agent's only privilege is a single sudoers rule — one fixed command, no wildcards:
+
+```
+agent ALL=(codebox-git) NOPASSWD: /usr/local/bin/codebox-gh-token
+```
+
+It can ask for a token; it cannot read the key, cannot run anything else as `codebox-git`,
+and cannot edit the policy that decides the scope (`/etc/codebox/gh-app.env`, root-owned).
+The repository it names is untrusted input and doesn't need to be checked: GitHub only ever
+narrows, so naming a repo outside the allowlist returns a read-only token for that repo.
+
+Measured inside a real box with `CODEBOX_AGENT_USER=agent`:
+
+| as the agent user | result |
+| --- | --- |
+| `cat /var/lib/codebox-git/gh-app.pem` | permission denied |
+| `sudo -n cat …` / `sudo -n -u codebox-git cat …` | `a password is required` |
+| append to `/etc/codebox/gh-app.env` | permission denied |
+| `codebox-gh-token --repo <allowlisted>` → write | 201 |
+| `codebox-gh-token --repo <other>` → write | 403 (read still 200) |
+| `git push --dry-run` | authenticates through the whole chain |
+
+**What you give up.** code-server runs as the agent, so the browser terminal has no sudo —
+admin work goes through `codebox ssh`, which lands you as the login user. Don't `su` back to
+a privileged account *inside* the editor: that terminal is a child of code-server and shares
+the agent's uid, so anything running as the agent can read the pty or ptrace the shell, and
+you would be handing over the password you just typed.
+
+Enable it on an existing box by setting the variable and re-running `codebox bootstrap`. The
+key moves out of your home directory and the agent's home becomes a fresh one, so the clone
+and any uncommitted work in the old home stay where they are — push first.
 
 ### Option B — fine-grained PAT (quick)
 

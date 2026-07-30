@@ -22,6 +22,10 @@ it's operational tooling. Two providers: `gcp` (a cloud VM behind an IAP tunnel)
 - `docker/` — the image the docker provider builds: `Dockerfile` (thin: a sudo-capable
   `coder` user, nothing codebox-specific) and `entrypoint.sh` (PID 1; runs code-server once
   bootstrap has installed it).
+- `vm/bootstrap.sh` is the privileged half (packages, the uid split, systemd units) and
+  `vm/bootstrap-user.sh` the agent's half (everything under the agent's home). With
+  `CODEBOX_AGENT_USER` set the second runs as that user; without it, inline as the login
+  user. Anything touching `$HOME` belongs in the second.
 - `vm/` — files copied to and executed **inside the box**, VM or container (`bootstrap.sh`,
   `idle-shutdown.sh`, `pre-suspend.sh`, `systemd/`, and the GitHub-access helpers
   `gh-app-token.sh`, `git-credential-codebox.sh`, `gh-shim.sh`, installed into

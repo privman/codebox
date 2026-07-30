@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Runs INSIDE the box — a GCP VM or a local Docker container — as the login user, which
 # has passwordless sudo on GCP images and in the codebox image.
-# Installs Claude Code, code-server, GitHub access, and (on a VM) the idle-shutdown timer.
+# Does the privileged half: packages, the code-server install, the uid split, and the
+# systemd units. Everything that lives in the agent's home is bootstrap-user.sh, which this
+# runs as the agent user.
 # Idempotent: safe to re-run.
 set -euo pipefail
 
@@ -13,6 +15,11 @@ GH_APP_INSTALL_ID="${CODEBOX_GITHUB_APP_INSTALLATION_ID:-}"
 GH_BOT_NAME="${CODEBOX_GITHUB_BOT_NAME:-}"
 GH_BOT_USER_ID="${CODEBOX_GITHUB_BOT_USER_ID:-}"
 GH_WRITE_REPOS="${CODEBOX_GITHUB_WRITE_REPOS:-}"
+# Empty means one uid for everything, as codebox has always worked. A username here turns
+# on privilege separation: see the agent / key separation section below.
+AGENT_USER="${CODEBOX_AGENT_USER:-}"
+SPLIT=0
+[ -z "$AGENT_USER" ] || SPLIT=1
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\033[1;32m[codebox]\033[0m %s\n' "$*"; }
@@ -26,7 +33,6 @@ else
   IN_CONTAINER=0
 fi
 in_container() { [ "$IN_CONTAINER" = 1 ]; }
-
 # --- base packages -------------------------------------------------------
 log "Updating apt and installing base packages ..."
 sudo apt-get update -y
@@ -53,263 +59,116 @@ if [ ! -x /usr/bin/gh ]; then
   # from it. Anything that needs gh warns for itself further down.
   [ "$gh_ok" = 1 ] || log "warning: GitHub CLI install failed; 'gh' (and PR creation) will be unavailable."
 fi
-
-# --- Claude Code ---------------------------------------------------------
-# Native installer: a self-contained binary in ~/.local/bin that auto-updates
-# with no language-runtime dependency. Installed as the user (never sudo).
-if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ]; then
-  log "Installing Claude Code (native installer) ..."
-  curl -fsSL https://claude.ai/install.sh | bash
-else
-  log "Claude Code already installed (it auto-updates in the background)."
-fi
-# Make sure ~/.local/bin is on PATH for login shells and code-server terminals.
-if ! grep -qs '\.local/bin' "$HOME/.bashrc"; then
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-fi
-export PATH="$HOME/.local/bin:$PATH"
-
 # --- code-server ---------------------------------------------------------
 if ! command -v code-server >/dev/null 2>&1; then
   log "Installing code-server ..."
   curl -fsSL https://code-server.dev/install.sh | sh
 fi
-
-# In a container, code-server has to listen on all interfaces or Docker's published
-# port cannot reach it. That is not an exposure: `codebox create` publishes the port to
-# the host's loopback only, and the password still applies.
-if in_container; then BIND_ADDR="0.0.0.0"; else BIND_ADDR="127.0.0.1"; fi
-log "Configuring code-server (${BIND_ADDR}:${REMOTE_PORT}) ..."
-mkdir -p "$HOME/.config/code-server"
-config="$HOME/.config/code-server/config.yaml"
-if [ ! -f "$config" ]; then
-  password="$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"
-  cat > "$config" <<EOF
-bind-addr: ${BIND_ADDR}:${REMOTE_PORT}
-auth: password
-password: ${password}
-cert: false
-EOF
-  chmod 600 "$config"
-  log "Generated a code-server password (stored in $config)."
-else
-  # Keep the existing password; just make sure the bind address is right.
-  sed -i "s|^bind-addr:.*|bind-addr: ${BIND_ADDR}:${REMOTE_PORT}|" "$config"
-  log "Kept existing code-server config."
-fi
-
-log "Applying default editor settings ..."
-user_data_dir="$HOME/.local/share/code-server"
-settings_dir="$user_data_dir/User"
-settings="$settings_dir/settings.json"
-mkdir -p "$settings_dir"
-[ -s "$settings" ] || echo '{}' > "$settings"
-# Seed our defaults, but never clobber a value the user has already chosen (keeps
-# re-running bootstrap non-destructive) — `$defaults * .` merges with the existing
-# file winning on every key it defines.
-#   window.autoDetectColorScheme — follow the browser/OS light/dark preference.
-#   window.title — project name first. VS Code's default leads with the file name,
-#     which in a browser tab truncates to something you can't tell apart from the
-#     other codebox tabs; the ${...} placeholders are VS Code's, not the shell's.
-codebox_settings='{
-  "window.autoDetectColorScheme": true,
-  "window.title": "${rootName}${separator}${dirty}${activeEditorShort}${separator}${appName}"
-}'
-tmp="$(mktemp)"
-if jq --argjson defaults "$codebox_settings" '$defaults * .' \
-     "$settings" > "$tmp" 2>/dev/null; then
-  mv "$tmp" "$settings"
-else
-  rm -f "$tmp"
-  log "warning: could not parse $settings; leaving it untouched."
-fi
-
-# --- GitHub access -------------------------------------------------------
-# Two mutually exclusive modes, chosen by what the laptop side copied over:
-#   App mode  — ~/.config/codebox/gh-app.pem plus the app/installation ids. Tokens are
-#               minted per use and expire in an hour; git and gh both act as the app's bot.
-#   PAT mode  — ~/.config/codebox/gh-token, a fine-grained token stored via `gh auth login`.
-# This runs *before* the clone below so a private CODEBOX_REPO authenticates first time.
+# --- agent / key separation ----------------------------------------------
+# With CODEBOX_AGENT_USER set, the box runs three uids instead of one:
+#
+#   the login user  you, over ssh — sudo, admin, no agent processes
+#   $AGENT_USER     code-server, Claude Code, every editor terminal — no sudo
+#   codebox-git     owns the GitHub App key and mints tokens — reachable only through one
+#                   sudoers rule, and only to run the minter
+#
+# That is what turns CODEBOX_GITHUB_WRITE_REPOS from a promise into a boundary: the agent
+# can ask for a scoped token but cannot read the key, so it cannot mint a broader one.
 conf_dir="$HOME/.config/codebox"
-bin_dir="$HOME/.local/bin"
-agent_name=""
-agent_email=""
 
-# The agent lives on branches, so let a first push create the upstream by itself.
-git config --global push.autoSetupRemote true
+if [ -n "$AGENT_USER" ]; then
+  log "Setting up privilege separation (agent: $AGENT_USER, key holder: codebox-git) ..."
+  id -u "$AGENT_USER" >/dev/null 2>&1 || \
+    sudo useradd --create-home --shell /bin/bash "$AGENT_USER"
+  id -u codebox-git >/dev/null 2>&1 || \
+    sudo useradd --system --create-home --home-dir /var/lib/codebox-git \
+                 --shell /usr/sbin/nologin codebox-git
 
-if [ -n "$GH_APP_ID" ] && [ -n "$GH_APP_INSTALL_ID" ] && [ -f "$conf_dir/gh-app.pem" ]; then
-  log "Configuring GitHub App access ..."
-  cat > "$conf_dir/gh-app.env" <<EOF
-# Written by codebox bootstrap; read by ~/.local/bin/codebox-gh-token.
+  # Make sure the agent never sits in a group that is root-equivalent, including on a box
+  # that was bootstrapped before this and had the agent added to something.
+  for group in sudo adm docker google-sudoers; do
+    sudo gpasswd -d "$AGENT_USER" "$group" >/dev/null 2>&1 || true
+  done
+
+  AGENT_HOME="$(getent passwd "$AGENT_USER" | cut -d: -f6)"
+  [ -n "$AGENT_HOME" ] || { log "error: could not resolve $AGENT_USER's home"; exit 1; }
+
+  if [ -f "$conf_dir/gh-app.pem" ]; then
+    log "Moving the app key behind codebox-git ..."
+    sudo install -d -m 0700 -o codebox-git -g codebox-git /var/lib/codebox-git
+    sudo install -m 0600 -o codebox-git -g codebox-git \
+      "$conf_dir/gh-app.pem" /var/lib/codebox-git/gh-app.pem
+    # The login user only ever held it in order to hand it over. Leaving a copy in a
+    # home directory would make the whole arrangement decorative.
+    rm -f "$conf_dir/gh-app.pem"
+  fi
+
+  # Root-owned so the agent cannot rewrite its own policy. World-readable on purpose: it
+  # holds ids and a repository list, no secrets, and codebox-git must be able to read it.
+  sudo install -d -m 0755 /etc/codebox
+  sudo tee /etc/codebox/gh-app.env >/dev/null <<EOF
+# Written by codebox bootstrap. Read by /usr/local/bin/codebox-gh-token, running as
+# codebox-git. The agent can read this file but not change it, and not read PEM.
 APP_ID=${GH_APP_ID}
 INSTALLATION_ID=${GH_APP_INSTALL_ID}
-PEM=${conf_dir}/gh-app.pem
-# Repositories the agent may write to. Everything else the app can see is minted
-# read-only. Empty means no policy: tokens are as broad as the installation.
+PEM=/var/lib/codebox-git/gh-app.pem
 WRITE_REPOS=${GH_WRITE_REPOS}
 EOF
-  chmod 600 "$conf_dir/gh-app.env"
+  sudo chmod 0644 /etc/codebox/gh-app.env
+  sudo install -m 0755 "$HERE/gh-app-token.sh" /usr/local/bin/codebox-gh-token
 
-  install -m 0755 -D "$HERE/gh-app-token.sh" "$bin_dir/codebox-gh-token"
-  install -m 0755 -D "$HERE/git-credential-codebox.sh" "$bin_dir/git-credential-codebox"
-  if [ -x /usr/bin/gh ]; then
-    install -m 0755 -D "$HERE/gh-shim.sh" "$bin_dir/gh"
-  else
-    log "warning: skipping the gh shim — /usr/bin/gh is missing, so 'gh pr create' won't work."
+  # The only privilege the agent gets. One fixed command, no wildcards: the minter reads
+  # its policy from the root-owned file above, so nothing in the arguments can widen the
+  # scope it hands back.
+  printf '%s ALL=(codebox-git) NOPASSWD: /usr/local/bin/codebox-gh-token\n' "$AGENT_USER" \
+    | sudo tee /etc/sudoers.d/codebox-agent >/dev/null
+  sudo chmod 0440 /etc/sudoers.d/codebox-agent
+  if ! sudo visudo -cf /etc/sudoers.d/codebox-agent >/dev/null; then
+    sudo rm -f /etc/sudoers.d/codebox-agent
+    log "error: the sudoers rule was rejected and has been removed; not continuing"
+    exit 1
   fi
+fi
 
-  # Absolute path on purpose: git must find the helper even when invoked from a context
-  # that never sourced .bashrc (and so has no ~/.local/bin on PATH).
-  git config --global --unset-all "credential.https://github.com.helper" 2>/dev/null || true
-  git config --global "credential.https://github.com.helper" "$bin_dir/git-credential-codebox"
-  # Without this git sends only the host, so the helper cannot tell which repository it is
-  # being asked about and every call would get the same scope.
-  git config --global "credential.https://github.com.useHttpPath" true
+# --- the agent's half ----------------------------------------------------
+# Claude Code, the editor config, the GitHub helpers and the clone all live in the agent's
+# home, so they are installed by bootstrap-user.sh running as that user. Without the split
+# it is the same script run inline as the login user, and the box is unchanged.
+user_env=(
+  "CODEBOX_REMOTE_PORT=$REMOTE_PORT"
+  "CODEBOX_REPO=$REPO"
+  "CODEBOX_GITHUB_APP_ID=$GH_APP_ID"
+  "CODEBOX_GITHUB_APP_INSTALLATION_ID=$GH_APP_INSTALL_ID"
+  "CODEBOX_GITHUB_BOT_NAME=$GH_BOT_NAME"
+  "CODEBOX_GITHUB_BOT_USER_ID=$GH_BOT_USER_ID"
+  "CODEBOX_GITHUB_WRITE_REPOS=$GH_WRITE_REPOS"
+  "CODEBOX_GIT_AGENT_NAME=${CODEBOX_GIT_AGENT_NAME:-}"
+  "CODEBOX_GIT_AGENT_EMAIL=${CODEBOX_GIT_AGENT_EMAIL:-}"
+  "CODEBOX_CONTAINER=${CODEBOX_CONTAINER:-}"
+  "CODEBOX_AGENT_SPLIT=$SPLIT"
+)
 
-  # Resolve the bot's login and numeric user id. The id is what makes GitHub render the
-  # commit as the bot — avatar and `bot` badge — instead of an unlinked name. It is the
-  # *bot user's* id, not the app id; mixing those up silently yields an unlinked commit.
-  if [ -z "$GH_BOT_NAME" ]; then
-    slug="$(curl -sf -H "Authorization: Bearer $("$bin_dir/codebox-gh-token" --jwt)" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/app | jq -r '.slug // empty')" || slug=""
-    [ -z "$slug" ] || GH_BOT_NAME="${slug}[bot]"
-  fi
-  if [ -n "$GH_BOT_NAME" ] && [ -z "$GH_BOT_USER_ID" ]; then
-    GH_BOT_USER_ID="$(curl -sf -H "Accept: application/vnd.github+json" \
-      "https://api.github.com/users/${GH_BOT_NAME%\[bot\]}%5Bbot%5D" \
-      | jq -r '.id // empty')" || GH_BOT_USER_ID=""
-  fi
-  if [ -n "$GH_BOT_NAME" ] && [ -n "$GH_BOT_USER_ID" ]; then
-    agent_name="$GH_BOT_NAME"
-    agent_email="${GH_BOT_USER_ID}+${GH_BOT_NAME}@users.noreply.github.com"
-    log "Agent identity: $agent_name <$agent_email>"
-  else
-    log "warning: could not look up the app's bot identity from api.github.com. Set"
-    log "         CODEBOX_GITHUB_BOT_NAME and CODEBOX_GITHUB_BOT_USER_ID in codebox.env"
-    log "         (id: 'gh api /users/<app-slug>%5Bbot%5D --jq .id') and re-run bootstrap."
-  fi
-
-elif [ -f "$conf_dir/gh-token" ]; then
-  log "Configuring GitHub access from a personal access token ..."
-  rm -f "$bin_dir/gh"   # a leftover App-mode shim would shadow the real gh
-  git config --global --unset-all "credential.https://github.com.helper" 2>/dev/null || true
-  if [ ! -x /usr/bin/gh ]; then
-    log "warning: /usr/bin/gh is missing, so the token can't be installed. Fix the gh install and re-run."
-  elif /usr/bin/gh auth login --with-token < "$conf_dir/gh-token"; then
-    # `setup-git` points git's credential helper at gh, so this one token covers both
-    # pushes and PR creation.
-    /usr/bin/gh auth setup-git
-    agent_name="codebox-agent"
-    agent_email="codebox-agent@users.noreply.github.com"
-    log "Agent identity: $agent_name <$agent_email> (unlinked — PRs will be attributed to the token's owner)"
-  else
-    log "warning: 'gh auth login' rejected the token in $conf_dir/gh-token."
-  fi
-
+if [ -n "$AGENT_USER" ]; then
+  # The scripts are in the login user's home, which the agent has no business reading.
+  # Stage them somewhere world-readable instead.
+  stage=/usr/local/lib/codebox
+  sudo rm -rf "$stage"
+  sudo install -d -m 0755 "$stage"
+  sudo install -m 0755 "$HERE"/*.sh "$stage/"
+  sudo -u "$AGENT_USER" -H env "${user_env[@]}" bash "$stage/bootstrap-user.sh"
 else
-  log "No GitHub credentials configured; skipping (set CODEBOX_GITHUB_* in codebox.env)."
+  env "${user_env[@]}" bash "$HERE/bootstrap-user.sh"
 fi
-
-# An explicit identity in codebox.env always wins over what we derived above.
-[ -z "${CODEBOX_GIT_AGENT_NAME:-}" ]  || agent_name="$CODEBOX_GIT_AGENT_NAME"
-[ -z "${CODEBOX_GIT_AGENT_EMAIL:-}" ] || agent_email="$CODEBOX_GIT_AGENT_EMAIL"
-
-if [ -n "$agent_name" ] && [ -n "$agent_email" ]; then
-  log "Labelling Claude Code's commits as $agent_name ..."
-  claude_settings="$HOME/.claude/settings.json"
-  mkdir -p "$HOME/.claude"
-  [ -s "$claude_settings" ] || echo '{}' > "$claude_settings"
-  # Claude Code applies `env` to the subprocesses it spawns, so this identity attaches to
-  # the commits *Claude* makes and leaves your own terminal commits on the VM's
-  # ~/.gitconfig identity — the two share a unix user, so env is what separates them.
-  # `attribution` is only seeded when unset, so a footer you chose yourself survives.
-  tmp="$(mktemp)"
-  if jq --arg n "$agent_name" --arg e "$agent_email" '
-        .env = ((.env // {}) + {
-          GIT_AUTHOR_NAME: $n,    GIT_AUTHOR_EMAIL: $e,
-          GIT_COMMITTER_NAME: $n, GIT_COMMITTER_EMAIL: $e
-        })
-      | if (.attribution | type) == "object" and (.attribution | has("commit"))
-        then .
-        else .attribution = ((.attribution // {}) + {commit: "🤖 committed by \($n) on codebox"})
-        end' "$claude_settings" > "$tmp" 2>/dev/null; then
-    mv "$tmp" "$claude_settings"
-  else
-    rm -f "$tmp"
-    log "warning: could not update $claude_settings; set the git identity there by hand."
-  fi
-fi
-
-# --- project repo --------------------------------------------------------
-# Clone CODEBOX_REPO into the home directory and make its root the folder
-# code-server opens. Idempotent: an existing checkout is left alone.
-if [ -n "$REPO" ]; then
-  # Derive the checkout directory from the URI's last path segment. Handles
-  # https://host/owner/repo, ssh://[user@]host/owner/repo and scp-style
-  # git@host:owner/repo; the `.git` suffix is optional.
-  repo_path="$REPO"
-  case "$repo_path" in
-    *://*) repo_path="${repo_path#*://}" ;;  # strip the scheme; [user@]host is dropped below
-    *@*:*) repo_path="${repo_path#*:}" ;;    # scp-style: keep what follows the colon
-  esac
-  repo_path="${repo_path%/}"                 # tolerate a trailing slash
-  repo_name="${repo_path##*/}"
-  repo_name="${repo_name%.git}"              # `.git` suffix is optional
-
-  repo_dir=""
-  if [ -z "$repo_name" ]; then
-    log "warning: could not derive a directory name from CODEBOX_REPO='$REPO'; skipping clone."
-  elif [ -d "$HOME/$repo_name/.git" ]; then
-    repo_dir="$HOME/$repo_name"
-    log "Repo already cloned at $repo_dir; leaving it as is."
-  elif [ -e "$HOME/$repo_name" ]; then
-    log "warning: $HOME/$repo_name exists but is not a git checkout; skipping clone."
-  else
-    log "Cloning $REPO into $HOME/$repo_name ..."
-    # Never block on a credential prompt — bootstrap runs non-interactively, so a
-    # private repo must fail fast rather than hang waiting on stdin.
-    if GIT_TERMINAL_PROMPT=0 \
-       GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new' \
-       git clone "$REPO" "$HOME/$repo_name"; then
-      repo_dir="$HOME/$repo_name"
-    else
-      log "warning: clone failed. If the repo is private, put credentials on the VM (an SSH"
-      log "         key in ~/.ssh, or a git credential helper) and re-run 'codebox bootstrap'."
-    fi
-  fi
-
-  if [ -n "$repo_dir" ]; then
-    # code-server remembers the last folder you opened in coder.json and prefers it
-    # over anything else, so seeding that entry makes the repo the default folder.
-    # Only seed it when nothing is recorded yet — otherwise we'd yank the user out of
-    # whatever they last had open every time bootstrap is re-run.
-    coder_json="$user_data_dir/coder.json"
-    if [ -s "$coder_json" ] && jq -e '.query.folder // .query.workspace' "$coder_json" >/dev/null 2>&1; then
-      log "code-server already has a last-opened folder; leaving it as is."
-    else
-      [ -s "$coder_json" ] && jq -e . "$coder_json" >/dev/null 2>&1 || echo '{}' > "$coder_json"
-      tmp="$(mktemp)"
-      if jq --arg folder "$repo_dir" '.query = ((.query // {}) + {folder: $folder})' \
-           "$coder_json" > "$tmp" 2>/dev/null; then
-        mv "$tmp" "$coder_json"
-        log "code-server will open $repo_dir by default."
-      else
-        rm -f "$tmp"
-        log "warning: could not update $coder_json; code-server will open its usual default view."
-      fi
-    fi
-  fi
-fi
-
 if in_container; then
   # The image's entrypoint runs code-server and picks it up within a few seconds of
   # this install finishing, so there is no unit to enable.
   log "Container: code-server is started by the entrypoint."
 else
-  log "Enabling code-server service ..."
-  sudo systemctl enable --now "code-server@${USER}"
+  # The unit runs as the agent user when the split is on: code-server is the agent's
+  # process, and every terminal it opens inherits that uid.
+  cs_user="${AGENT_USER:-$USER}"
+  log "Enabling code-server service (as $cs_user) ..."
+  sudo systemctl enable --now "code-server@${cs_user}"
 fi
 
 # --- suspend notice ------------------------------------------------------
@@ -354,5 +213,3 @@ else
 fi
 
 log "Bootstrap complete."
-log "Claude Code: $(claude --version 2>/dev/null || echo 'installed (run \"claude\" to sign in)')"
-log "code-server: $(code-server --version 2>/dev/null | head -1 || echo missing)"

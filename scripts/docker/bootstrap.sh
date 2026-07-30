@@ -8,6 +8,7 @@ set -euo pipefail
 codebox_check_docker
 codebox_validate_repo
 codebox_validate_github
+codebox_validate_agent_user
 
 state="$(codebox_container_state)"
 [ -n "$state" ] || codebox_die "container '$CODEBOX_INSTANCE' not found. Run 'codebox create' first."
@@ -53,6 +54,7 @@ docker exec -u "$CODEBOX_DOCKER_USER" \
   -e "CODEBOX_GITHUB_APP_INSTALLATION_ID=$CODEBOX_GITHUB_APP_INSTALLATION_ID" \
   -e "CODEBOX_GITHUB_BOT_NAME=$CODEBOX_GITHUB_BOT_NAME" \
   -e "CODEBOX_GITHUB_WRITE_REPOS=$CODEBOX_GITHUB_WRITE_REPOS" \
+  -e "CODEBOX_AGENT_USER=$CODEBOX_AGENT_USER" \
   -e "CODEBOX_GITHUB_BOT_USER_ID=$CODEBOX_GITHUB_BOT_USER_ID" \
   -e "CODEBOX_GIT_AGENT_NAME=$CODEBOX_GIT_AGENT_NAME" \
   -e "CODEBOX_GIT_AGENT_EMAIL=$CODEBOX_GIT_AGENT_EMAIL" \

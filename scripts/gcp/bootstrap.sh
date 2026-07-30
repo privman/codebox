@@ -9,6 +9,7 @@ codebox_check_gcloud
 codebox_require_project
 codebox_validate_repo
 codebox_validate_github
+codebox_validate_agent_user
 
 status="$(codebox_instance_status)"
 [ -n "$status" ] || codebox_die "instance '$CODEBOX_INSTANCE' not found. Run 'codebox create' first."
@@ -55,6 +56,7 @@ CODEBOX_GITHUB_APP_ID='${CODEBOX_GITHUB_APP_ID}' \
 CODEBOX_GITHUB_APP_INSTALLATION_ID='${CODEBOX_GITHUB_APP_INSTALLATION_ID}' \
 CODEBOX_GITHUB_BOT_NAME='${CODEBOX_GITHUB_BOT_NAME}' \
 CODEBOX_GITHUB_WRITE_REPOS='${CODEBOX_GITHUB_WRITE_REPOS}' \
+CODEBOX_AGENT_USER='${CODEBOX_AGENT_USER}' \
 CODEBOX_GITHUB_BOT_USER_ID='${CODEBOX_GITHUB_BOT_USER_ID}' \
 CODEBOX_GIT_AGENT_NAME='${CODEBOX_GIT_AGENT_NAME}' \
 CODEBOX_GIT_AGENT_EMAIL='${CODEBOX_GIT_AGENT_EMAIL}' \

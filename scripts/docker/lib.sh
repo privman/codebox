@@ -22,6 +22,10 @@ CODEBOX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${CODEBOX_DOCKER_BIND:=127.0.0.1}"
 
 CODEBOX_DOCKER_HOME="/home/${CODEBOX_DOCKER_USER}"
+# Whose home the editor's config lives in: the agent's when the uid split is on, otherwise
+# the single box user's.
+CODEBOX_BOX_USER="${CODEBOX_AGENT_USER:-$CODEBOX_DOCKER_USER}"
+CODEBOX_BOX_HOME="/home/${CODEBOX_BOX_USER}"
 
 codebox_check_docker() {
   command -v docker >/dev/null 2>&1 || \
