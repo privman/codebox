@@ -314,6 +314,10 @@ The first of these that exists wins:
 | `CODEBOX_GITHUB_TOKEN_FILE` | *(empty)*      | Path on your laptop to a file holding a fine-grained PAT (option B) |
 | `CODEBOX_GITHUB_WRITE_REPOS` | *(empty)*     | Comma-separated `owner/name` the agent may write to; everything else is read-only |
 | `CODEBOX_AGENT_USER`      | *(empty)*        | Run the agent as this unprivileged user, with the App key behind a third account |
+| `CODEBOX_CLAUDE_TOKEN_FILE` | *(empty)*      | Path on your laptop to a `claude setup-token` token; the box comes up authenticated |
+| `CODEBOX_AGENT_PERMISSION_MODE` | *(empty)* | `bypassPermissions`, `dontAsk`, … written into the box's Claude settings |
+| `CODEBOX_AGENT_DENY_TOOLS` | *(empty)*       | Comma-separated tools the agent may never call, enforced in every mode |
+| `CODEBOX_AGENT_ALLOW_TOOLS` | *(empty)*      | Comma-separated allowlist; required with `dontAsk` |
 | `CODEBOX_GIT_AGENT_NAME`  | *(from the app)* | Author/committer name for Claude Code's commits     |
 | `CODEBOX_GIT_AGENT_EMAIL` | *(from the app)* | Author/committer email for Claude Code's commits    |
 | `CODEBOX_DOCKER_IMAGE`    | `codebox:local`  | `--provider docker`: image tag built by `create`    |
@@ -780,11 +784,29 @@ Destroying it and running `codebox create` again costs a few minutes.
 claude --dangerously-skip-permissions
 ```
 
+Set `CODEBOX_CLAUDE_TOKEN_FILE` to a token from `claude setup-token` and the box arrives
+authenticated, with no `claude` login step. That token bills to your subscription and can
+*only* make model requests — it cannot pull in your claude.ai connectors, so the connectors
+whose OAuth scopes you cannot narrow simply aren't in the box. Locally configured MCP
+servers, whose credentials you do control, still work. That is the strongest form of the
+"scope the credential" advice below: absent beats denied.
+
 **Skipping prompts does not mean skipping policy.** Claude Code evaluates `deny` rules
 regardless of mode — the docs are explicit that in `bypassPermissions` mode *"explicit deny
 rules still apply"* — so you can attach connectors and still make individual tools
 uncallable. This is what makes it safe to give the box an email connector for reading
 without also handing over the ability to delete a mailbox:
+
+codebox can write this for you, so the policy lives in `codebox.env` and applies to every
+box you create rather than being hand-edited inside each one:
+
+```bash
+# in codebox.env — quote these, deny patterns contain parens
+CODEBOX_AGENT_PERMISSION_MODE="bypassPermissions"
+CODEBOX_AGENT_DENY_TOOLS="mcp__claude_ai_Gmail__delete_email, Bash(rm -rf /*)"
+```
+
+which lands as:
 
 ```jsonc
 // ~/.claude/settings.json in the box

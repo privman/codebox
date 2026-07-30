@@ -46,6 +46,10 @@ _codebox_load_env
 : "${CODEBOX_GITHUB_TOKEN_FILE:=}"
 : "${CODEBOX_GITHUB_WRITE_REPOS:=}"
 : "${CODEBOX_AGENT_USER:=}"
+: "${CODEBOX_CLAUDE_TOKEN_FILE:=}"
+: "${CODEBOX_AGENT_PERMISSION_MODE:=}"
+: "${CODEBOX_AGENT_DENY_TOOLS:=}"
+: "${CODEBOX_AGENT_ALLOW_TOOLS:=}"
 : "${CODEBOX_GIT_AGENT_NAME:=}"
 : "${CODEBOX_GIT_AGENT_EMAIL:=}"
 
@@ -86,6 +90,42 @@ codebox_validate_agent_user() {
   case "$CODEBOX_AGENT_USER" in
     *[!a-z0-9_-]*) codebox_die "CODEBOX_AGENT_USER must be a lowercase unix username; got '$CODEBOX_AGENT_USER'." ;;
   esac
+}
+
+# The Claude Code credential and the tool policy that ride into the box together: one says
+# what the agent may spend, the other what it may call.
+codebox_validate_agent_policy() {
+  if [ -n "${CODEBOX_CLAUDE_TOKEN_FILE:-}" ]; then
+    [ -f "$CODEBOX_CLAUDE_TOKEN_FILE" ] || codebox_die "Claude token file not found: $CODEBOX_CLAUDE_TOKEN_FILE"
+    [ -s "$CODEBOX_CLAUDE_TOKEN_FILE" ] || codebox_die "Claude token file is empty: $CODEBOX_CLAUDE_TOKEN_FILE"
+  fi
+  case "${CODEBOX_AGENT_PERMISSION_MODE:-}" in
+    ""|default|acceptEdits|plan|auto|dontAsk|bypassPermissions) ;;
+    *) codebox_die "CODEBOX_AGENT_PERMISSION_MODE must be one of default, acceptEdits, plan, auto, dontAsk, bypassPermissions; got '$CODEBOX_AGENT_PERMISSION_MODE'." ;;
+  esac
+  # These reach a VM inside a single-quoted remote command, so a quote or backslash in a
+  # rule would break the command rather than the rule. Permission patterns hardly ever need
+  # them; rejecting is far better than shipping a mangled policy.
+  local list
+  for list in "${CODEBOX_AGENT_DENY_TOOLS:-}" "${CODEBOX_AGENT_ALLOW_TOOLS:-}"; do
+    case "$list" in
+      *[\'\"\\]*) codebox_die "CODEBOX_AGENT_DENY_TOOLS / _ALLOW_TOOLS cannot contain quotes or backslashes; got '$list'." ;;
+    esac
+  done
+
+  # dontAsk denies anything not explicitly allowed, so shipping it with an empty allow list
+  # produces a box where the agent cannot run a single tool.
+  if [ "${CODEBOX_AGENT_PERMISSION_MODE:-}" = dontAsk ] && [ -z "${CODEBOX_AGENT_ALLOW_TOOLS:-}" ]; then
+    codebox_die "CODEBOX_AGENT_PERMISSION_MODE=dontAsk needs CODEBOX_AGENT_ALLOW_TOOLS; it denies everything else."
+  fi
+}
+
+# Echo a comma-separated tool list as a JSON array, for the permissions block in the box's
+# ~/.claude/settings.json. Empty input yields nothing, so callers can tell "not configured"
+# from "configured empty".
+codebox_tools_json() {
+  [ -n "${1:-}" ] || return 0
+  printf '%s' "$1" | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))'
 }
 
 # Sanity-check CODEBOX_REPO before we spend minutes building a box. The actual URI

@@ -10,6 +10,7 @@ codebox_require_project
 codebox_validate_repo
 codebox_validate_github
 codebox_validate_agent_user
+codebox_validate_agent_policy
 
 status="$(codebox_instance_status)"
 [ -n "$status" ] || codebox_die "instance '$CODEBOX_INSTANCE' not found. Run 'codebox create' first."
@@ -46,6 +47,9 @@ fi
 if [ -n "$CODEBOX_GITHUB_TOKEN_FILE" ]; then
   codebox_copy_secret "$CODEBOX_GITHUB_TOKEN_FILE" gh-token
 fi
+if [ -n "$CODEBOX_CLAUDE_TOKEN_FILE" ]; then
+  codebox_copy_secret "$CODEBOX_CLAUDE_TOKEN_FILE" claude-token
+fi
 
 codebox_info "Running on-VM bootstrap (code-server, Claude Code, GitHub access, idle-shutdown) ..."
 codebox_gcloud compute ssh "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" --tunnel-through-iap \
@@ -57,6 +61,9 @@ CODEBOX_GITHUB_APP_INSTALLATION_ID='${CODEBOX_GITHUB_APP_INSTALLATION_ID}' \
 CODEBOX_GITHUB_BOT_NAME='${CODEBOX_GITHUB_BOT_NAME}' \
 CODEBOX_GITHUB_WRITE_REPOS='${CODEBOX_GITHUB_WRITE_REPOS}' \
 CODEBOX_AGENT_USER='${CODEBOX_AGENT_USER}' \
+CODEBOX_AGENT_PERMISSION_MODE='${CODEBOX_AGENT_PERMISSION_MODE}' \
+CODEBOX_AGENT_DENY_TOOLS='${CODEBOX_AGENT_DENY_TOOLS}' \
+CODEBOX_AGENT_ALLOW_TOOLS='${CODEBOX_AGENT_ALLOW_TOOLS}' \
 CODEBOX_GITHUB_BOT_USER_ID='${CODEBOX_GITHUB_BOT_USER_ID}' \
 CODEBOX_GIT_AGENT_NAME='${CODEBOX_GIT_AGENT_NAME}' \
 CODEBOX_GIT_AGENT_EMAIL='${CODEBOX_GIT_AGENT_EMAIL}' \

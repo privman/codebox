@@ -76,6 +76,12 @@ fi
 # can ask for a scoped token but cannot read the key, so it cannot mint a broader one.
 conf_dir="$HOME/.config/codebox"
 
+# Comma-separated list -> JSON array, for the permissions block bootstrap-user.sh writes.
+tools_json() {
+  [ -n "${1:-}" ] || return 0
+  printf '%s' "$1" | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))'
+}
+
 if [ -n "$AGENT_USER" ]; then
   log "Setting up privilege separation (agent: $AGENT_USER, key holder: codebox-git) ..."
   id -u "$AGENT_USER" >/dev/null 2>&1 || \
@@ -101,6 +107,18 @@ if [ -n "$AGENT_USER" ]; then
     # The login user only ever held it in order to hand it over. Leaving a copy in a
     # home directory would make the whole arrangement decorative.
     rm -f "$conf_dir/gh-app.pem"
+  fi
+
+  if [ -f "$conf_dir/claude-token" ]; then
+    # The model credential is the agent's, so it moves with everything else of the agent's.
+    log "Handing the Claude Code credential to $AGENT_USER ..."
+    # Create the parent explicitly: `install -d` makes missing parents root-owned, which
+    # would leave ~/.config unwritable by the agent and break the editor config below it.
+    sudo install -d -m 0755 -o "$AGENT_USER" -g "$AGENT_USER" "$AGENT_HOME/.config"
+    sudo install -d -m 0700 -o "$AGENT_USER" -g "$AGENT_USER" "$AGENT_HOME/.config/codebox"
+    sudo install -m 0600 -o "$AGENT_USER" -g "$AGENT_USER" \
+      "$conf_dir/claude-token" "$AGENT_HOME/.config/codebox/claude-token"
+    rm -f "$conf_dir/claude-token"
   fi
 
   # Root-owned so the agent cannot rewrite its own policy. World-readable on purpose: it
@@ -146,6 +164,11 @@ user_env=(
   "CODEBOX_GIT_AGENT_EMAIL=${CODEBOX_GIT_AGENT_EMAIL:-}"
   "CODEBOX_CONTAINER=${CODEBOX_CONTAINER:-}"
   "CODEBOX_AGENT_SPLIT=$SPLIT"
+  "CODEBOX_AGENT_PERMISSION_MODE=${CODEBOX_AGENT_PERMISSION_MODE:-}"
+  "CODEBOX_AGENT_DENY_TOOLS=${CODEBOX_AGENT_DENY_TOOLS:-}"
+  "CODEBOX_AGENT_ALLOW_TOOLS=${CODEBOX_AGENT_ALLOW_TOOLS:-}"
+  "CODEBOX_AGENT_DENY_TOOLS_JSON=$(tools_json "${CODEBOX_AGENT_DENY_TOOLS:-}")"
+  "CODEBOX_AGENT_ALLOW_TOOLS_JSON=$(tools_json "${CODEBOX_AGENT_ALLOW_TOOLS:-}")"
 )
 
 if [ -n "$AGENT_USER" ]; then

@@ -16,6 +16,12 @@ GH_BOT_NAME="${CODEBOX_GITHUB_BOT_NAME:-}"
 GH_BOT_USER_ID="${CODEBOX_GITHUB_BOT_USER_ID:-}"
 GH_WRITE_REPOS="${CODEBOX_GITHUB_WRITE_REPOS:-}"
 SPLIT="${CODEBOX_AGENT_SPLIT:-0}"
+PERMISSION_MODE="${CODEBOX_AGENT_PERMISSION_MODE:-}"
+DENY_TOOLS="${CODEBOX_AGENT_DENY_TOOLS:-}"
+ALLOW_TOOLS="${CODEBOX_AGENT_ALLOW_TOOLS:-}"
+# Pre-rendered JSON arrays, built by the caller where jq and the config live together.
+DENY_TOOLS_JSON="${CODEBOX_AGENT_DENY_TOOLS_JSON:-}"
+ALLOW_TOOLS_JSON="${CODEBOX_AGENT_ALLOW_TOOLS_JSON:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\033[1;32m[codebox]\033[0m %s\n' "$*"; }
@@ -27,6 +33,18 @@ else
 fi
 in_container() { [ "$IN_CONTAINER" = 1 ]; }
 
+# Add a line to the shell startup files if it is not there already. Both files, on purpose:
+# Debian's ~/.bashrc returns early when the shell is not interactive, so an export only
+# there is invisible to `bash -lc` and to anything headless, while ~/.profile alone misses
+# the interactive non-login shells that code-server terminals actually are.
+add_shell_line() {
+  local line="$1" marker="$2" f
+  for f in "$HOME/.profile" "$HOME/.bashrc"; do
+    [ -e "$f" ] || : > "$f"
+    grep -qsF "$marker" "$f" || printf '%s\n' "$line" >> "$f"
+  done
+}
+
 # --- Claude Code ---------------------------------------------------------
 # Native installer: a self-contained binary in ~/.local/bin that auto-updates
 # with no language-runtime dependency. Installed as the user (never sudo).
@@ -36,10 +54,9 @@ if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ]; th
 else
   log "Claude Code already installed (it auto-updates in the background)."
 fi
-# Make sure ~/.local/bin is on PATH for login shells and code-server terminals.
-if ! grep -qs '\.local/bin' "$HOME/.bashrc"; then
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-fi
+# Make sure ~/.local/bin is on PATH for login shells and code-server terminals. Debian's
+# skeleton ~/.profile already adds it for login shells; this covers the rest.
+add_shell_line 'export PATH="$HOME/.local/bin:$PATH"' '.local/bin'
 export PATH="$HOME/.local/bin:$PATH"
 
 # In a container, code-server has to listen on all interfaces or Docker's published
@@ -224,6 +241,55 @@ if [ -n "$agent_name" ] && [ -n "$agent_email" ]; then
     log "warning: could not update $claude_settings; set the git identity there by hand."
   fi
 fi
+
+# --- Claude Code credential ----------------------------------------------
+# A token from `claude setup-token` on your laptop, copied in by the provider. It bills to
+# your subscription and can only make model requests: it cannot reach claude.ai connectors,
+# which is the point — a connector you cannot scope is better absent than denied. Without
+# it the box is unauthenticated and you run `claude` once to log in, as before.
+if [ -f "$conf_dir/claude-token" ]; then
+  chmod 600 "$conf_dir/claude-token"
+  # Exported by reference, never inlined: the secret stays in one 0600 file instead of being
+  # copied into a world-readable shell profile.
+  add_shell_line \
+    'export CLAUDE_CODE_OAUTH_TOKEN="$(cat ~/.config/codebox/claude-token 2>/dev/null)"' \
+    'CLAUDE_CODE_OAUTH_TOKEN'
+  log "Claude Code will authenticate from $conf_dir/claude-token."
+else
+  log "No Claude Code credential configured; run 'claude' in the box once to log in."
+fi
+
+# --- Claude Code tool policy ---------------------------------------------
+# Permission rules for the agent, from codebox.env. The point of these is that they survive
+# --dangerously-skip-permissions: Claude Code evaluates deny rules in every mode, so this is
+# how a box can run without approval prompts and still not be able to call a destructive
+# tool. codebox owns the three keys it is given; anything else in the file is left alone.
+if [ -n "$PERMISSION_MODE" ] || [ -n "$DENY_TOOLS" ] || [ -n "$ALLOW_TOOLS" ]; then
+  log "Applying the agent's tool policy ..."
+  claude_settings="$HOME/.claude/settings.json"
+  mkdir -p "$HOME/.claude"
+  [ -s "$claude_settings" ] || echo '{}' > "$claude_settings"
+  deny_json="${DENY_TOOLS_JSON:-}"
+  allow_json="${ALLOW_TOOLS_JSON:-}"
+  tmp="$(mktemp)"
+  if jq --arg mode "$PERMISSION_MODE" \
+        --argjson deny "${deny_json:-null}" \
+        --argjson allow "${allow_json:-null}" '
+        .permissions = ((.permissions // {})
+          | if $mode  == "" then . else .defaultMode = $mode end
+          | if $deny  == null then . else .deny  = $deny  end
+          | if $allow == null then . else .allow = $allow end)
+      ' "$claude_settings" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$claude_settings"
+    [ -z "$PERMISSION_MODE" ] || log "  mode: $PERMISSION_MODE"
+    [ -z "$DENY_TOOLS" ]      || log "  deny: $DENY_TOOLS"
+    [ -z "$ALLOW_TOOLS" ]     || log "  allow: $ALLOW_TOOLS"
+  else
+    rm -f "$tmp"
+    log "warning: could not update $claude_settings; set permissions there by hand."
+  fi
+fi
+
 # --- project repo --------------------------------------------------------
 # Clone CODEBOX_REPO into the home directory and make its root the folder
 # code-server opens. Idempotent: an existing checkout is left alone.
