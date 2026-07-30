@@ -15,6 +15,15 @@ CODEBOX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # read-only system directory and there is no checkout to keep a config in.
 _codebox_load_env() {
   local candidate
+  # A config named explicitly but not present is always a mistake — a typo, or a file that
+  # was moved or deleted. Falling through to the next candidate would quietly operate on a
+  # *different* box than the one asked for, which is the worst possible way to be wrong.
+  # (printf rather than codebox_die: the helpers are defined below this function's call.)
+  if [ -n "${CODEBOX_ENV:-}" ] && [ ! -f "${CODEBOX_ENV}" ]; then
+    printf 'codebox: CODEBOX_ENV names a file that does not exist: %s\n' "$CODEBOX_ENV" >&2
+    printf 'codebox: refusing to fall back to another config — fix the path or unset CODEBOX_ENV.\n' >&2
+    exit 1
+  fi
   for candidate in "${CODEBOX_ENV:-}" "$PWD/codebox.env" "$CODEBOX_ROOT/codebox.env" \
                    "${XDG_CONFIG_HOME:-$HOME/.config}/codebox/codebox.env"; do
     [ -n "$candidate" ] || continue
