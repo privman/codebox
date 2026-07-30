@@ -30,6 +30,11 @@ laptop  ──IAP TCP tunnel──▶  sshd (:22, IAP range only)  ──local f
   are restored intact on resume. A suspended instance bills for its disk plus the saved memory,
   not for CPU/RAM.
 - **One command to come back.** `codebox connect` resumes (or starts) the VM if needed and opens the tunnel.
+- **A blast radius you can hand to an agent.** The point of putting the box *away from your
+  laptop* is that you can let Claude Code run without approving every step: it is a machine
+  you can destroy and rebuild, holding a checkout and a repo-scoped token rather than your
+  keys, your email and your home directory. See
+  [Letting the agent run unattended](#letting-the-agent-run-unattended).
 
 ## Prerequisites
 
@@ -711,6 +716,68 @@ dist/codebox version          # the bundle self-test the build already ran
 # Build the apt tree into dist/apt without pushing anything (needs a key in $GPG_KEY):
 GPG_KEY="$(gpg --armor --export-secret-keys <key-id>)" packaging/publish-apt.sh 0.2.0
 ```
+
+## Letting the agent run unattended
+
+Approving every command defeats the purpose of a box like this. The intent is that you can
+run the agent with permission prompts off, because the box — not the prompt — is what
+contains it: a disposable VM or container, reachable only through an IAP tunnel or
+loopback, holding a checkout and a
+[repo-scoped GitHub token](#scoping-what-the-agent-can-write) instead of your credentials.
+Destroying it and running `codebox create` again costs a few minutes.
+
+```bash
+claude --dangerously-skip-permissions
+```
+
+**Skipping prompts does not mean skipping policy.** Claude Code evaluates `deny` rules
+regardless of mode — the docs are explicit that in `bypassPermissions` mode *"explicit deny
+rules still apply"* — so you can attach connectors and still make individual tools
+uncallable. This is what makes it safe to give the box an email connector for reading
+without also handing over the ability to delete a mailbox:
+
+```jsonc
+// ~/.claude/settings.json in the box
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "deny": [
+      "mcp__claude_ai_Gmail__delete_email",
+      "mcp__claude_ai_Gmail__trash_email",
+      "Bash(gcloud compute instances delete:*)"
+    ]
+  }
+}
+```
+
+A **bare tool name** in `deny` (no argument pattern) removes the tool from Claude's context
+entirely — it is not refused at call time, it is never offered. A scoped rule like
+`Bash(rm -rf /*)` leaves the tool available and blocks matching calls.
+
+**If you would rather fail closed, use `dontAsk` instead of `bypassPermissions`.** It
+"auto-denies tools unless pre-approved via `permissions.allow`" and never prompts, so it is
+a prompt-free allowlist: a tool that appears later — a connector adding a `delete_all`
+endpoint in an update — is denied by default rather than allowed by default. The cost is
+that you have to enumerate what the agent may use, including the ordinary coding tools.
+
+Two more layers worth knowing about, in rough order of strength:
+
+1. **Scope the credential, not the caller.** A connector authorised with read-only scopes
+   cannot delete anything however the agent is configured — the same reasoning as
+   [scoping what the agent can write](#scoping-what-the-agent-can-write) on GitHub. Prefer
+   this whenever the service offers it; it is the only layer that survives a
+   misconfiguration of the ones below.
+2. **`PreToolUse` hooks** for rules a static list can't express (deny `git push` to `main`,
+   allow it elsewhere). A hook that exits 2 blocks the call before permission rules are
+   evaluated, and a hook returning `"allow"` cannot override a `deny` rule — so hooks add
+   restrictions without being able to remove them.
+
+What none of this covers: an agent with a shell can write a script that does what a denied
+tool would have done. `Read`/`Edit` deny rules "don't apply to arbitrary subprocesses",
+and neither does anything else in this list. If that matters for a given box, the answer is
+the box's own boundaries — a container with no credentials mounted, or Claude Code's
+[sandboxing](https://code.claude.com/docs/en/sandboxing) for OS-level filesystem and
+network limits — not a longer deny list.
 
 ## Security model / going public
 
