@@ -413,9 +413,12 @@ without touching the repo.
 On GitHub, under **Settings → Developer settings → GitHub Apps → New GitHub App**:
 
 1. Repository permissions: **Contents: Read and write**, **Pull requests: Read and write**
-   (Metadata: Read is added automatically). Uncheck **Active** under Webhook — nothing here
-   listens for events. Deliberately leave **Workflows** unset: without it the agent cannot
-   modify `.github/workflows`, which is a guardrail worth keeping.
+   (Metadata: Read is added automatically). Add **Actions: Read**, **Checks: Read** and
+   **Commit statuses: Read** so the agent can see CI — without them `gh run view` and
+   `gh pr checks` come back empty, and it cannot read the failure it is being asked to fix.
+   Uncheck **Active** under Webhook — nothing here listens for events. Deliberately leave
+   **Workflows** unset: without it the agent cannot modify `.github/workflows`, which is a
+   guardrail worth keeping, and reading CI does not require it.
 2. **Generate a private key** — a `.pem` downloads. Note the **App ID** on the same page.
 3. **Install App** onto the one repository. The URL of the resulting settings page ends in
    `/installations/<id>` — that number is the **installation ID**.
@@ -448,8 +451,15 @@ The keys stay on the VM's disk across suspend/stop, but not `codebox destroy` �
 a repository **ruleset** requiring a pull request for `main`, and "push into branches freely"
 becomes bounded by the server rather than by the agent's good behaviour.
 
-**If something 401s**, the cached token may be stale (e.g. you just reinstalled the app):
-`rm ~/.cache/codebox/gh-token` forces a fresh one.
+**Changing an installed app's permissions** — say you add the CI read permissions later —
+does not take effect on its own. GitHub holds the change until the installation accepts it
+(a banner on the app's install page, plus an email to the owner), and until then freshly
+minted tokens still carry the old grants, which looks exactly like the new permission not
+working. Accept it, then clear the cache below.
+
+**If something 401s**, or a permission you just granted appears to do nothing, the cached
+token may be stale: `rm ~/.cache/codebox/token-*` forces fresh ones. There is one cache file
+per scope, so removing the lot is the reliable move.
 
 ### Scoping what the agent can write
 
