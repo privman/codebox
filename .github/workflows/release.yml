@@ -71,14 +71,27 @@ jobs:
     env:
       VERSION: ${{ needs.detect.outputs.version }}
       GH_TOKEN: ${{ github.token }}
-      # Read once here so the apt steps can test whether signing is configured;
-      # secrets are not visible to a step's own `if:` condition.
-      GPG_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
-      GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      # The signing key is deliberately NOT a job-level env var. Every step in this job
+      # runs scripts out of the repo, and anything with contents:write can edit those —
+      # a job-level secret would be readable by all of them. It is set only on the one
+      # step that needs it, below. `secrets` is not available to a step's own `if:`, so
+      # the presence check happens here and the steps branch on this output instead.
+      - name: Check whether apt signing is configured
+        id: signing
+        env:
+          GPG_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "$GPG_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build artifacts
         run: packaging/build.sh "$VERSION"
@@ -123,7 +136,10 @@ jobs:
           fi
 
       - name: Publish the apt repository
-        if: env.GPG_KEY != ''
+        if: steps.signing.outputs.configured == 'true'
+        env:
+          GPG_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -132,7 +148,7 @@ jobs:
             packaging/publish-apt.sh "$VERSION"
 
       - name: Note that apt publishing was skipped
-        if: env.GPG_KEY == ''
+        if: steps.signing.outputs.configured == 'false'
         run: |
           echo "::warning::APT_GPG_PRIVATE_KEY is not set, so the apt repository was not \
           updated. The release and the Homebrew formula are published. See the Releasing \
