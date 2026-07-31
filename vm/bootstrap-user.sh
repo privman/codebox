@@ -17,6 +17,7 @@ GH_BOT_USER_ID="${CODEBOX_GITHUB_BOT_USER_ID:-}"
 GH_WRITE_REPOS="${CODEBOX_GITHUB_WRITE_REPOS:-}"
 SPLIT="${CODEBOX_AGENT_SPLIT:-0}"
 MARKETPLACES="${CODEBOX_CLAUDE_MARKETPLACES:-}"
+EXTENSIONS="${CODEBOX_CODE_EXTENSIONS:-}"
 PLUGINS="${CODEBOX_CLAUDE_PLUGINS:-}"
 PERMISSION_MODE="${CODEBOX_AGENT_PERMISSION_MODE:-}"
 DENY_TOOLS="${CODEBOX_AGENT_DENY_TOOLS:-}"
@@ -109,6 +110,27 @@ else
   rm -f "$tmp"
   log "warning: could not parse $settings; leaving it untouched."
 fi
+
+# --- editor extensions ---------------------------------------------------
+# Extension ids from codebox.env, installed into the same code-server the agent's editor
+# runs. Note that code-server resolves ids against Open VSX, not Microsoft's marketplace,
+# so an extension that is Microsoft-only will not be found by id.
+if [ -n "$EXTENSIONS" ]; then
+  log "Installing editor extensions ..."
+  printf '%s\n' "$EXTENSIONS" | tr ',' '\n' | while IFS= read -r ext; do
+    ext="$(printf '%s' "$ext" | tr -d '[:space:]')"
+    [ -n "$ext" ] || continue
+    if out="$(code-server --install-extension "$ext" 2>&1)"; then
+      log "  extension: $ext"
+    else
+      log "  warning: could not install extension $ext"
+      log "           $(printf '%s' "$out" | tr '\r' '\n' | grep -v '^$' | tail -1)"
+    fi
+  done
+  # Not fatal, for the same reason a missing skill is not: the box still works, and the
+  # editor reports a missing extension far more clearly than a failed bootstrap would.
+fi
+
 # --- GitHub access -------------------------------------------------------
 # Two mutually exclusive modes, chosen by what the laptop side copied over:
 #   App mode  — ~/.config/codebox/gh-app.pem plus the app/installation ids. Tokens are

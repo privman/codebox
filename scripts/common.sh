@@ -59,6 +59,7 @@ _codebox_load_env
 : "${CODEBOX_SSH_KEY_FILE:=}"
 : "${CODEBOX_CLAUDE_MARKETPLACES:=}"
 : "${CODEBOX_CLAUDE_PLUGINS:=}"
+: "${CODEBOX_CODE_EXTENSIONS:=}"
 : "${CODEBOX_AGENT_PERMISSION_MODE:=}"
 : "${CODEBOX_AGENT_DENY_TOOLS:=}"
 : "${CODEBOX_AGENT_ALLOW_TOOLS:=}"
@@ -133,9 +134,10 @@ codebox_validate_agent_policy() {
   # These reach a VM inside a single-quoted remote command; a quote would break the command
   # rather than the value. Whitespace inside an entry is always a mistake here.
   local item
-  for item in "${CODEBOX_CLAUDE_MARKETPLACES:-}" "${CODEBOX_CLAUDE_PLUGINS:-}"; do
+  for item in "${CODEBOX_CLAUDE_MARKETPLACES:-}" "${CODEBOX_CLAUDE_PLUGINS:-}" \
+              "${CODEBOX_CODE_EXTENSIONS:-}"; do
     case "$item" in
-      *[\'\"\\]*) codebox_die "CODEBOX_CLAUDE_MARKETPLACES / _PLUGINS cannot contain quotes or backslashes; got '$item'." ;;
+      *[\'\"\\]*) codebox_die "CODEBOX_CLAUDE_MARKETPLACES / _PLUGINS / CODEBOX_CODE_EXTENSIONS cannot contain quotes or backslashes; got '$item'." ;;
     esac
   done
 

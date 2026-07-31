@@ -318,6 +318,7 @@ The first of these that exists wins:
 | `CODEBOX_SSH_KEY_FILE`    | *(empty)*        | Path on your laptop to a passphrase-less ssh key (a read-only deploy key) for ssh remotes |
 | `CODEBOX_CLAUDE_MARKETPLACES` | *(empty)*    | Comma-separated plugin marketplaces to add in every box |
 | `CODEBOX_CLAUDE_PLUGINS`  | *(empty)*        | Comma-separated `plugin@marketplace` to install in every box |
+| `CODEBOX_CODE_EXTENSIONS` | *(empty)*        | Comma-separated VS Code extension ids to install into code-server |
 | `CODEBOX_AGENT_PERMISSION_MODE` | *(empty)* | `bypassPermissions`, `dontAsk`, … written into the box's Claude settings |
 | `CODEBOX_AGENT_DENY_TOOLS` | *(empty)*       | Comma-separated tools the agent may never call, enforced in every mode |
 | `CODEBOX_AGENT_ALLOW_TOOLS` | *(empty)*      | Comma-separated allowlist; required with `dontAsk` |
@@ -707,7 +708,9 @@ codebox ssh -- -N -L 8000:localhost:8000
   editor follows your OS light/dark preference, and a `window.title` that puts the project
   name before the file name so browser tabs stay identifiable (override either in settings —
   bootstrap never overwrites a value you've already set).
-- **git, GitHub CLI (`gh`), ripgrep, jq, tmux, build-essential**
+- **git, GitHub CLI (`gh`), ripgrep, jq, tmux, build-essential, openssh-client**
+- **VS Code extensions** listed in `CODEBOX_CODE_EXTENSIONS`, resolved against Open VSX —
+  which is where code-server looks, so Microsoft-only extensions are not available by id
 - **GitHub access for the agent**, if configured — see
   [Giving the agent access to a private repo](#giving-the-agent-access-to-a-private-repo)
 - **your project**, if `CODEBOX_REPO` is set — cloned into the home directory and opened as
