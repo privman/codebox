@@ -330,30 +330,63 @@ The first of these that exists wins:
 
 ## Running multiple codeboxes
 
-You can run several independent VMs for the same project from the same directory — each box
-is just a separate config file. `codebox` resolves its config in this order (first match
-wins): `$CODEBOX_ENV`, then `./codebox.env`, then `<repo>/codebox.env`. So point
-`CODEBOX_ENV` at a per-instance file:
+Several boxes can live in one `codebox.env`. File-level settings are the shared defaults;
+`CODEBOX_BOX_<name>_<KEY>` overrides one of them for the box you select with `--box`:
+
+```bash
+# codebox.env
+CODEBOX_PROJECT="my-project"                  # shared by every box
+CODEBOX_CODE_EXTENSIONS="redhat.vscode-yaml"  # shared by every box
+
+CODEBOX_BOX_work_LOCAL_PORT=8080
+CODEBOX_BOX_work_REPO="https://github.com/me/work-project"
+
+CODEBOX_BOX_play_LOCAL_PORT=8081
+CODEBOX_BOX_play_AGENT_USER="agent"           # only this box runs the uid split
+```
+
+```bash
+codebox --box work create
+codebox --box work connect        # editor on localhost:8080
+codebox --box play connect        # and this one on 8081, at the same time
+```
+
+**The instance name is handled for you.** A named box gets `codebox-<name>` — so `--box work`
+drives a VM or container called `codebox-work` — and a file-level `CODEBOX_INSTANCE` is
+deliberately *not* applied to named boxes, since two boxes sharing an instance name would
+point at the same machine. Set `CODEBOX_BOX_<name>_INSTANCE` if you want a different one.
+
+**`CODEBOX_LOCAL_PORT` is the other one to vary**, and only if you want two editors open at
+once — otherwise both `connect`s try to bind `localhost:8080`. The *remote* port can stay
+the same; the boxes are different machines.
+
+Resolution per setting: `CODEBOX_BOX_<name>_<KEY>` → file-level `CODEBOX_<KEY>` → built-in
+default. Without `--box`, nothing changes: `CODEBOX_BOX_*` entries are inert and the file
+behaves exactly as a single-box config always has.
+
+<details>
+<summary>Why this shape rather than sections or plain name prefixes</summary>
+
+`codebox.env` is **sourced as bash** — people put `$HOME` and command substitutions in it —
+so INI-style `[section]` headers would mean parsing the file ourselves and losing all of
+that. Namespacing on the box name directly (`CODEBOX_<name>_<KEY>`) reads better but
+collides with real settings the moment a box is called `github` or `docker`, and would keep
+colliding as settings are added. A reserved `CODEBOX_BOX_` prefix has neither problem.
+
+</details>
+
+**Separate files still work**, and are the better fit when boxes have little in common or
+one of them holds different credentials: `codebox` resolves `$CODEBOX_ENV`, then
+`./codebox.env`, then `<repo>/codebox.env`, then `~/.config/codebox/codebox.env`.
 
 ```bash
 cp codebox.env codebox-b.env
-$EDITOR codebox-b.env          # give it a unique CODEBOX_INSTANCE (and CODEBOX_LOCAL_PORT)
-
 CODEBOX_ENV=codebox-b.env codebox create
-CODEBOX_ENV=codebox-b.env codebox connect
 ```
 
-Two values must differ per box:
-
-- **`CODEBOX_INSTANCE`** — a unique VM name, or the second `codebox create` collides with the first.
-- **`CODEBOX_LOCAL_PORT`** — only needed if you want both editor tunnels open *at the same
-  time* (two `connect`s would otherwise both try to bind `localhost:8080`). The **remote**
-  port can stay the same — the VMs are different machines.
-
-Everything else just works: the IAP firewall rules are shared and created idempotently, and
-each VM generates its own code-server password. Per-instance config files match the
-`codebox*.env` entry in `.gitignore`, so they won't be committed (only `codebox.env.example`
-is tracked).
+Either way the IAP firewall rules are shared and created idempotently, and each box
+generates its own code-server password. Per-instance files match the `codebox*.env` entry in
+`.gitignore`, so they won't be committed.
 
 ## Cloning your project into the box
 

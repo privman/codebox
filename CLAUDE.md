@@ -14,7 +14,9 @@ it's operational tooling. Two providers: `gcp` (a cloud VM behind an IAP tunnel)
 - `bin/codebox` — provider-agnostic CLI dispatcher. Parses a `--provider` flag (`gcp` by
   default, or `docker`) and execs the matching script in `scripts/<provider>/`.
 - `scripts/common.sh` — provider-agnostic config loading (`codebox.env`), shared defaults,
-  logging and validation. Sourced by each provider's `lib.sh`. Anything only one provider
+  logging and validation. Also per-box resolution: `CODEBOX_BOX_<name>_<KEY>` overrides
+  `CODEBOX_<KEY>` when `--box <name>` is given. The file is *sourced*, so it must stay
+  valid bash — no section headers. Sourced by each provider's `lib.sh`. Anything only one provider
   understands belongs in that provider's `lib.sh`, not here.
 - `scripts/gcp/lib.sh`, `scripts/docker/lib.sh` — provider defaults and helpers.
 - `scripts/<provider>/*.sh` — the commands (create/start/stop/connect/ssh/status/bootstrap/

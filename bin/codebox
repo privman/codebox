@@ -41,6 +41,9 @@ Commands:
   version    Print the codebox version
 
 Options:
+  --box <name>        Which box in codebox.env to act on. Settings named
+                      CODEBOX_BOX_<name>_<KEY> override the file-level
+                      CODEBOX_<KEY> for that box. Default: the unnamed box.
   --provider <name>   Where the box lives. Default: gcp
                       gcp     a cloud VM reached over an IAP tunnel
                       docker  a container on this machine (no idle auto-suspend)
@@ -59,6 +62,11 @@ while [ $# -gt 0 ]; do
       provider="$2"; shift 2 ;;
     --provider=*)
       provider="${1#--provider=}"; shift ;;
+    --box)
+      [ $# -ge 2 ] || { echo "codebox: --box requires a value" >&2; exit 1; }
+      export CODEBOX_BOX="$2"; shift 2 ;;
+    --box=*)
+      export CODEBOX_BOX="${1#--box=}"; shift ;;
     *)
       args+=("$1"); shift ;;
   esac
