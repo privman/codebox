@@ -44,6 +44,9 @@ fi
 if [ -n "$CODEBOX_CLAUDE_TOKEN_FILE" ]; then
   codebox_copy_secret "$CODEBOX_CLAUDE_TOKEN_FILE" claude-token
 fi
+if [ -n "$CODEBOX_SSH_KEY_FILE" ]; then
+  codebox_copy_secret "$CODEBOX_SSH_KEY_FILE" ssh-key
+fi
 
 codebox_info "Running the bootstrap inside the box (code-server, Claude Code, GitHub access) ..."
 # CODEBOX_IDLE_TIMEOUT_MIN is pinned to 0: idle auto-suspend is a cloud-billing feature

@@ -259,6 +259,60 @@ else
   log "No Claude Code credential configured; run 'claude' in the box once to log in."
 fi
 
+
+# --- ssh access to git hosts ---------------------------------------------
+# A passphrase-less key, copied in by the provider. It exists for the one case the
+# credential helper cannot serve: Claude Code's background marketplace refresh disables
+# credential helpers for its `git pull`, so a private marketplace over https cannot
+# authenticate and falls back to re-cloning the whole repo. An ssh remote authenticates on
+# every pull, so a private skill marketplace stays in sync without that fallback.
+#
+# The supported shape is a read-only *deploy key* on the repository it needs to reach:
+# per-repo and read-only, so it cannot write anywhere and cannot be used to go around
+# CODEBOX_GITHUB_WRITE_REPOS. A personal ssh key here would do both, and is not the
+# intended use.
+if [ -f "$conf_dir/ssh-key" ]; then
+  log "Installing the ssh key ..."
+  install -d -m 0700 "$HOME/.ssh"
+  install -m 0600 "$conf_dir/ssh-key" "$HOME/.ssh/id_codebox"
+  # One copy, in the place ssh looks. The staged copy has done its job.
+  rm -f "$conf_dir/ssh-key"
+
+  # Host keys from GitHub's own metadata endpoint over TLS, rather than ssh-keyscan, which
+  # trusts whatever answers on port 22. Without them a non-interactive pull fails on an
+  # unknown host, which is exactly the situation this key exists for.
+  known="$HOME/.ssh/known_hosts"
+  touch "$known"
+  chmod 0600 "$known"
+  if hostkeys="$(curl -fsS https://api.github.com/meta 2>/dev/null | jq -r '.ssh_keys[]?' 2>/dev/null)" \
+     && [ -n "$hostkeys" ]; then
+    while IFS= read -r hostkey; do
+      [ -n "$hostkey" ] || continue
+      grep -qsF "$hostkey" "$known" || printf 'github.com %s\n' "$hostkey" >> "$known"
+    done <<< "$hostkeys"
+    log "  pinned github.com host keys from api.github.com/meta"
+  else
+    log "  warning: could not fetch GitHub's host keys; ssh pulls will fail until"
+    log "           ~/.ssh/known_hosts has an entry for github.com"
+  fi
+
+  # IdentitiesOnly so ssh offers this key rather than everything it can find, which on a
+  # box with several keys is what produces "too many authentication failures".
+  ssh_cfg="$HOME/.ssh/config"
+  touch "$ssh_cfg"
+  chmod 0600 "$ssh_cfg"
+  if ! grep -qs "id_codebox" "$ssh_cfg"; then
+    cat >> "$ssh_cfg" <<'SSHCFG'
+
+Host github.com
+  User git
+  IdentityFile ~/.ssh/id_codebox
+  IdentitiesOnly yes
+SSHCFG
+  fi
+  log "  ssh configured for github.com (key: ~/.ssh/id_codebox)"
+fi
+
 # --- Claude Code tool policy ---------------------------------------------
 # Permission rules for the agent, from codebox.env. The point of these is that they survive
 # --dangerously-skip-permissions: Claude Code evaluates deny rules in every mode, so this is

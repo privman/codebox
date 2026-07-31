@@ -37,7 +37,7 @@ in_container() { [ "$IN_CONTAINER" = 1 ]; }
 log "Updating apt and installing base packages ..."
 sudo apt-get update -y
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  curl git build-essential ca-certificates gnupg ripgrep jq tmux
+  curl git build-essential ca-certificates gnupg ripgrep jq tmux openssh-client
 
 # --- GitHub CLI ----------------------------------------------------------
 # From GitHub's own apt repo; the Debian package lags badly. Checked by path, not by
@@ -109,17 +109,19 @@ if [ -n "$AGENT_USER" ]; then
     rm -f "$conf_dir/gh-app.pem"
   fi
 
-  if [ -f "$conf_dir/claude-token" ]; then
-    # The model credential is the agent's, so it moves with everything else of the agent's.
-    log "Handing the Claude Code credential to $AGENT_USER ..."
+  # The model credential and the ssh key are both the agent's own, so they move into its
+  # home with the rest of its config and out of the login user's.
+  for secret in claude-token ssh-key; do
+    [ -f "$conf_dir/$secret" ] || continue
+    log "Handing $secret to $AGENT_USER ..."
     # Create the parent explicitly: `install -d` makes missing parents root-owned, which
     # would leave ~/.config unwritable by the agent and break the editor config below it.
     sudo install -d -m 0755 -o "$AGENT_USER" -g "$AGENT_USER" "$AGENT_HOME/.config"
     sudo install -d -m 0700 -o "$AGENT_USER" -g "$AGENT_USER" "$AGENT_HOME/.config/codebox"
     sudo install -m 0600 -o "$AGENT_USER" -g "$AGENT_USER" \
-      "$conf_dir/claude-token" "$AGENT_HOME/.config/codebox/claude-token"
-    rm -f "$conf_dir/claude-token"
-  fi
+      "$conf_dir/$secret" "$AGENT_HOME/.config/codebox/$secret"
+    rm -f "$conf_dir/$secret"
+  done
 
   # Root-owned so the agent cannot rewrite its own policy. World-readable on purpose: it
   # holds ids and a repository list, no secrets, and codebox-git must be able to read it.

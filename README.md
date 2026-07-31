@@ -315,6 +315,7 @@ The first of these that exists wins:
 | `CODEBOX_GITHUB_WRITE_REPOS` | *(empty)*     | Comma-separated `owner/name` the agent may write to; everything else is read-only |
 | `CODEBOX_AGENT_USER`      | *(empty)*        | Run the agent as this unprivileged user, with the App key behind a third account |
 | `CODEBOX_CLAUDE_TOKEN_FILE` | *(empty)*      | Path on your laptop to a `claude setup-token` token; the box comes up authenticated |
+| `CODEBOX_SSH_KEY_FILE`    | *(empty)*        | Path on your laptop to a passphrase-less ssh key (a read-only deploy key) for ssh remotes |
 | `CODEBOX_AGENT_PERMISSION_MODE` | *(empty)* | `bypassPermissions`, `dontAsk`, … written into the box's Claude settings |
 | `CODEBOX_AGENT_DENY_TOOLS` | *(empty)*       | Comma-separated tools the agent may never call, enforced in every mode |
 | `CODEBOX_AGENT_ALLOW_TOOLS` | *(empty)*      | Comma-separated allowlist; required with `dontAsk` |
@@ -494,6 +495,49 @@ standing in.
 > **This is self-restriction until you add the privilege split.** The `.pem` lives in the box,
 > so anything running there can call the API directly and mint a full token. See
 > [Keeping the key away from the agent](#keeping-the-key-away-from-the-agent).
+
+### Syncing skills from a private marketplace
+
+Everything else in codebox reaches GitHub over https with a short-lived, repo-scoped App
+token. A private [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces)
+is the one thing that cannot, because of how its background refresh works:
+
+> By default, the background refresh disables git credential helpers for its `git pull`, so
+> the pull can't authenticate to private repositories over HTTPS even when a helper is
+> configured. SSH remotes aren't affected.
+
+A failed pull falls back to re-cloning the whole marketplace, which the docs note "may fail
+intermittently" on large repos. So a private marketplace wants an **ssh** remote, and
+`CODEBOX_SSH_KEY_FILE` gives the box a key for it:
+
+```bash
+# 1. On your laptop, a key used for nothing else
+ssh-keygen -t ed25519 -N "" -C "codebox marketplace" -f ~/.secrets/codebox-marketplace
+
+# 2. Add the .pub as a READ-ONLY deploy key on the marketplace repo
+#    (repo -> Settings -> Deploy keys -> Add, leave "Allow write access" unchecked)
+
+# 3. In codebox.env
+CODEBOX_SSH_KEY_FILE="$HOME/.secrets/codebox-marketplace"
+```
+
+Then in the box, add the marketplace by its ssh URL:
+
+```bash
+claude plugin marketplace add git@github.com:you/your-skills.git
+```
+
+Bootstrap installs the key as `~/.ssh/id_codebox` (mode 0600, in the agent's home under the
+[uid split](#keeping-the-key-away-from-the-agent)), writes an `~/.ssh/config` entry using
+`IdentitiesOnly`, and pins github.com's host keys from `api.github.com/meta` over TLS —
+rather than `ssh-keyscan`, which trusts whatever answers on port 22. Without pinned host
+keys a non-interactive pull fails on an unknown host, which is precisely the case this is
+for.
+
+**Use a read-only deploy key, not your own ssh key.** A deploy key is scoped to one
+repository and, left read-only, cannot write to it — so it cannot be used to get around
+`CODEBOX_GITHUB_WRITE_REPOS`. Your personal key would do both, and unlike the App key it
+lives in the agent's home where the agent can read it.
 
 ### Keeping the key away from the agent
 

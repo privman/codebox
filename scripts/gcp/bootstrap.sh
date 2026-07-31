@@ -50,6 +50,9 @@ fi
 if [ -n "$CODEBOX_CLAUDE_TOKEN_FILE" ]; then
   codebox_copy_secret "$CODEBOX_CLAUDE_TOKEN_FILE" claude-token
 fi
+if [ -n "$CODEBOX_SSH_KEY_FILE" ]; then
+  codebox_copy_secret "$CODEBOX_SSH_KEY_FILE" ssh-key
+fi
 
 codebox_info "Running on-VM bootstrap (code-server, Claude Code, GitHub access, idle-shutdown) ..."
 codebox_gcloud compute ssh "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" --tunnel-through-iap \

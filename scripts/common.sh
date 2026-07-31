@@ -56,6 +56,7 @@ _codebox_load_env
 : "${CODEBOX_GITHUB_WRITE_REPOS:=}"
 : "${CODEBOX_AGENT_USER:=}"
 : "${CODEBOX_CLAUDE_TOKEN_FILE:=}"
+: "${CODEBOX_SSH_KEY_FILE:=}"
 : "${CODEBOX_AGENT_PERMISSION_MODE:=}"
 : "${CODEBOX_AGENT_DENY_TOOLS:=}"
 : "${CODEBOX_AGENT_ALLOW_TOOLS:=}"
@@ -108,6 +109,25 @@ codebox_validate_agent_policy() {
     [ -f "$CODEBOX_CLAUDE_TOKEN_FILE" ] || codebox_die "Claude token file not found: $CODEBOX_CLAUDE_TOKEN_FILE"
     [ -s "$CODEBOX_CLAUDE_TOKEN_FILE" ] || codebox_die "Claude token file is empty: $CODEBOX_CLAUDE_TOKEN_FILE"
   fi
+  if [ -n "${CODEBOX_SSH_KEY_FILE:-}" ]; then
+    [ -f "$CODEBOX_SSH_KEY_FILE" ] || codebox_die "SSH key not found: $CODEBOX_SSH_KEY_FILE"
+    [ -s "$CODEBOX_SSH_KEY_FILE" ] || codebox_die "SSH key is empty: $CODEBOX_SSH_KEY_FILE"
+    # A public key here is a common slip and would fail silently inside the box.
+    case "$CODEBOX_SSH_KEY_FILE" in
+      *.pub) codebox_die "CODEBOX_SSH_KEY_FILE must be the private key, not $CODEBOX_SSH_KEY_FILE" ;;
+    esac
+    grep -qs -- "-----BEGIN .*PRIVATE KEY-----" "$CODEBOX_SSH_KEY_FILE" || \
+      codebox_die "CODEBOX_SSH_KEY_FILE does not look like a private key: $CODEBOX_SSH_KEY_FILE"
+    # An encrypted key cannot be used unattended: a background pull has nowhere to ask for
+    # the passphrase. Test by trying to derive the public key with an empty one — grepping
+    # for "ENCRYPTED" only catches the old PEM format, not the OpenSSH format every current
+    # ssh-keygen writes, where the encryption is inside the base64 blob.
+    if command -v ssh-keygen >/dev/null 2>&1 &&
+       ! ssh-keygen -y -P "" -f "$CODEBOX_SSH_KEY_FILE" >/dev/null 2>&1; then
+      codebox_die "CODEBOX_SSH_KEY_FILE is passphrase-protected (or not a usable private key); a background git pull in the box has nowhere to ask for the passphrase. Use a dedicated passphrase-less deploy key."
+    fi
+  fi
+
   case "${CODEBOX_AGENT_PERMISSION_MODE:-}" in
     ""|default|acceptEdits|plan|auto|dontAsk|bypassPermissions) ;;
     *) codebox_die "CODEBOX_AGENT_PERMISSION_MODE must be one of default, acceptEdits, plan, auto, dontAsk, bypassPermissions; got '$CODEBOX_AGENT_PERMISSION_MODE'." ;;
