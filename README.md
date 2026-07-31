@@ -316,6 +316,8 @@ The first of these that exists wins:
 | `CODEBOX_AGENT_USER`      | *(empty)*        | Run the agent as this unprivileged user, with the App key behind a third account |
 | `CODEBOX_CLAUDE_TOKEN_FILE` | *(empty)*      | Path on your laptop to a `claude setup-token` token; the box comes up authenticated |
 | `CODEBOX_SSH_KEY_FILE`    | *(empty)*        | Path on your laptop to a passphrase-less ssh key (a read-only deploy key) for ssh remotes |
+| `CODEBOX_CLAUDE_MARKETPLACES` | *(empty)*    | Comma-separated plugin marketplaces to add in every box |
+| `CODEBOX_CLAUDE_PLUGINS`  | *(empty)*        | Comma-separated `plugin@marketplace` to install in every box |
 | `CODEBOX_AGENT_PERMISSION_MODE` | *(empty)* | `bypassPermissions`, `dontAsk`, … written into the box's Claude settings |
 | `CODEBOX_AGENT_DENY_TOOLS` | *(empty)*       | Comma-separated tools the agent may never call, enforced in every mode |
 | `CODEBOX_AGENT_ALLOW_TOOLS` | *(empty)*      | Comma-separated allowlist; required with `dontAsk` |
@@ -521,10 +523,25 @@ ssh-keygen -t ed25519 -N "" -C "codebox marketplace" -f ~/.secrets/codebox-marke
 CODEBOX_SSH_KEY_FILE="$HOME/.secrets/codebox-marketplace"
 ```
 
-Then in the box, add the marketplace by its ssh URL:
+Then declare it in `codebox.env` so every box installs it during bootstrap, rather than
+being set up by hand:
+
+```bash
+CODEBOX_CLAUDE_MARKETPLACES="git@github.com:you/your-skills.git"
+CODEBOX_CLAUDE_PLUGINS="your-plugin@your-skills"
+```
+
+Both are comma-separated, marketplaces are added before plugins, and both steps are
+idempotent — re-running `codebox bootstrap` reports what is already there and changes
+nothing. They are additive: removing an entry from the config does not remove it from an
+existing box, since the box may also hold things you added inside it. A source that cannot
+be reached is a warning, not a failed bootstrap — a box missing a skill is still a box.
+
+You can equally add one by hand inside the box:
 
 ```bash
 claude plugin marketplace add git@github.com:you/your-skills.git
+claude plugin install your-plugin@your-skills
 ```
 
 Bootstrap installs the key as `~/.ssh/id_codebox` (mode 0600, in the agent's home under the
@@ -704,9 +721,35 @@ Python projects; install anything else you need per project (or extend `vm/boots
 
 ### Signing in to Claude Code
 
-Claude Code is installed but **not** authenticated — no credentials are baked into this
-repo or the image. In an editor terminal (or `codebox ssh`), run `claude` once and follow
-the login prompt. Your credentials stay on the VM's disk.
+No credentials are baked into this repo or the image, so a box has to be given one. Two ways:
+
+**Set `CODEBOX_CLAUDE_TOKEN_FILE`** (recommended, and required if the agent is to run
+unattended). Mint a token once on your laptop and point at the file:
+
+```bash
+claude setup-token                       # browser flow; prints a one-year token
+$EDITOR ~/.secrets/claude-token          # paste it, one line
+chmod 600 ~/.secrets/claude-token
+
+# in codebox.env
+CODEBOX_CLAUDE_TOKEN_FILE="$HOME/.secrets/claude-token"
+```
+
+Every box then comes up authenticated with no login step, and the credential it holds bills
+to your subscription but can *only* make model requests — it cannot reach your claude.ai
+connectors. That is deliberate: see
+[Letting the agent run unattended](#letting-the-agent-run-unattended).
+
+**Or log in by hand.** Leave the setting empty, then in an editor terminal (or
+`codebox ssh`) run `claude` once and follow the prompt. Fine for a box you drive yourself;
+the credential stored this way is your full login rather than a model-requests-only token,
+and every new box needs the step repeated.
+
+To check either one, from inside the box:
+
+```bash
+claude -p 'reply with OK'
+```
 
 ## Auto-suspend on idle
 

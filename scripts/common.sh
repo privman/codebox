@@ -57,6 +57,8 @@ _codebox_load_env
 : "${CODEBOX_AGENT_USER:=}"
 : "${CODEBOX_CLAUDE_TOKEN_FILE:=}"
 : "${CODEBOX_SSH_KEY_FILE:=}"
+: "${CODEBOX_CLAUDE_MARKETPLACES:=}"
+: "${CODEBOX_CLAUDE_PLUGINS:=}"
 : "${CODEBOX_AGENT_PERMISSION_MODE:=}"
 : "${CODEBOX_AGENT_DENY_TOOLS:=}"
 : "${CODEBOX_AGENT_ALLOW_TOOLS:=}"
@@ -127,6 +129,23 @@ codebox_validate_agent_policy() {
       codebox_die "CODEBOX_SSH_KEY_FILE is passphrase-protected (or not a usable private key); a background git pull in the box has nowhere to ask for the passphrase. Use a dedicated passphrase-less deploy key."
     fi
   fi
+
+  # These reach a VM inside a single-quoted remote command; a quote would break the command
+  # rather than the value. Whitespace inside an entry is always a mistake here.
+  local item
+  for item in "${CODEBOX_CLAUDE_MARKETPLACES:-}" "${CODEBOX_CLAUDE_PLUGINS:-}"; do
+    case "$item" in
+      *[\'\"\\]*) codebox_die "CODEBOX_CLAUDE_MARKETPLACES / _PLUGINS cannot contain quotes or backslashes; got '$item'." ;;
+    esac
+  done
+
+  # An ssh marketplace with no key is the misconfiguration that produces a box whose skills
+  # silently never sync, which is exactly what this feature exists to avoid.
+  case "${CODEBOX_CLAUDE_MARKETPLACES:-}" in
+    *git@*|*ssh://*)
+      [ -n "${CODEBOX_SSH_KEY_FILE:-}" ] || \
+        codebox_die "CODEBOX_CLAUDE_MARKETPLACES has an ssh source but CODEBOX_SSH_KEY_FILE is empty; the box would have no key to clone it with." ;;
+  esac
 
   case "${CODEBOX_AGENT_PERMISSION_MODE:-}" in
     ""|default|acceptEdits|plan|auto|dontAsk|bypassPermissions) ;;

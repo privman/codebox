@@ -16,6 +16,8 @@ GH_BOT_NAME="${CODEBOX_GITHUB_BOT_NAME:-}"
 GH_BOT_USER_ID="${CODEBOX_GITHUB_BOT_USER_ID:-}"
 GH_WRITE_REPOS="${CODEBOX_GITHUB_WRITE_REPOS:-}"
 SPLIT="${CODEBOX_AGENT_SPLIT:-0}"
+MARKETPLACES="${CODEBOX_CLAUDE_MARKETPLACES:-}"
+PLUGINS="${CODEBOX_CLAUDE_PLUGINS:-}"
 PERMISSION_MODE="${CODEBOX_AGENT_PERMISSION_MODE:-}"
 DENY_TOOLS="${CODEBOX_AGENT_DENY_TOOLS:-}"
 ALLOW_TOOLS="${CODEBOX_AGENT_ALLOW_TOOLS:-}"
@@ -311,6 +313,44 @@ Host github.com
 SSHCFG
   fi
   log "  ssh configured for github.com (key: ~/.ssh/id_codebox)"
+fi
+
+
+# --- skills from plugin marketplaces -------------------------------------
+# Declared in codebox.env, so every box comes up with the same skills instead of each one
+# being set up by hand. Both commands are idempotent and exit 0 when the marketplace or
+# plugin is already there, so re-running bootstrap is a no-op rather than an error.
+#
+# Additive only: a marketplace removed from the config is not removed from the box, because
+# the box's own state may include things you added inside it.
+if [ -n "$MARKETPLACES$PLUGINS" ]; then
+  log "Setting up plugin marketplaces ..."
+
+  # Marketplaces first: a plugin cannot install from one that is not configured yet.
+  printf '%s\n' "$MARKETPLACES" | tr ',' '\n' | while IFS= read -r src; do
+    src="$(printf '%s' "$src" | tr -d '[:space:]')"
+    [ -n "$src" ] || continue
+    if out="$(claude plugin marketplace add "$src" 2>&1)"; then
+      log "  marketplace: $src"
+    else
+      log "  warning: could not add marketplace $src"
+      log "           $(printf '%s' "$out" | tr '\r' '\n' | grep -v '^$' | tail -1)"
+    fi
+  done
+
+  printf '%s\n' "$PLUGINS" | tr ',' '\n' | while IFS= read -r spec; do
+    spec="$(printf '%s' "$spec" | tr -d '[:space:]')"
+    [ -n "$spec" ] || continue
+    if out="$(claude plugin install "$spec" --scope user 2>&1)"; then
+      log "  plugin: $spec"
+    else
+      log "  warning: could not install plugin $spec"
+      log "           $(printf '%s' "$out" | tr '\r' '\n' | grep -v '^$' | tail -1)"
+    fi
+  done
+
+  # Neither failure is fatal: a box with a missing skill is still a working box, and dying
+  # here would strand a bootstrap that has already done everything else.
 fi
 
 # --- Claude Code tool policy ---------------------------------------------
