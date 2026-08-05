@@ -439,8 +439,11 @@ if [ -n "$REPO" ]; then
        git clone "$REPO" "$HOME/$repo_name"; then
       repo_dir="$HOME/$repo_name"
     else
-      log "warning: clone failed. If the repo is private, put credentials on the VM (an SSH"
-      log "         key in ~/.ssh, or a git credential helper) and re-run 'codebox bootstrap'."
+      log "warning: clone failed. For a private repo, put the credential in codebox.env and"
+      log "         re-run 'codebox bootstrap': CODEBOX_GITHUB_APP_* for an https remote,"
+      log "         CODEBOX_SSH_KEY_FILE for an ssh one. Dropping a key in ~/.ssh by hand"
+      log "         does not work under CODEBOX_AGENT_USER — this half runs as the agent,"
+      log "         whose home is not the one 'codebox ssh' puts you in."
     fi
   fi
 
