@@ -3,8 +3,8 @@
 class Codebox < Formula
   desc "Manage a cloud dev VM for Claude Code and code-server"
   homepage "https://github.com/privman/codebox"
-  url "https://github.com/privman/codebox/releases/download/v0.1.0/codebox-0.1.0.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  url "https://github.com/privman/codebox/releases/download/v0.1.1/codebox-0.1.1.tar.gz"
+  sha256 "057ca4a3ee56ee1eb9ddbac3999beee30fe62504c97b34c3d5263ebec0275a0e"
 
   def install
     # Keep the tree together — bin/codebox resolves the symlink below to find
