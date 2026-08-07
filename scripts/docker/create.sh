@@ -8,6 +8,7 @@ codebox_check_docker
 codebox_validate_repo
 codebox_validate_github
 codebox_validate_agent_user
+codebox_check_mount_agent_split
 
 state="$(codebox_container_state)"
 if [ -n "$state" ]; then
@@ -20,6 +21,7 @@ dockerfile="$CODEBOX_ROOT/docker/Dockerfile"
 codebox_info "Building image $CODEBOX_DOCKER_IMAGE ..."
 docker build \
   --build-arg "CODEBOX_USER=$CODEBOX_DOCKER_USER" \
+  --build-arg "CODEBOX_UID=$CODEBOX_DOCKER_UID" \
   -t "$CODEBOX_DOCKER_IMAGE" \
   -f "$dockerfile" \
   "$CODEBOX_ROOT"
@@ -33,6 +35,16 @@ while IFS= read -r spec; do
   publish_args+=(-p "$spec")
 done <<< "$(codebox_publish_args)"
 
+# A bind mount is fixed at create time for the same reason ports are, so `connect` checks
+# it against the config too and says when they have drifted.
+mount_args=()
+mount_src="$(codebox_mount_source)"
+if [ -n "$mount_src" ]; then
+  mount_target="$(codebox_mount_target)"
+  codebox_info "Mounting $mount_src at $mount_target ..."
+  mount_args=(-v "$mount_src:$mount_target")
+fi
+
 codebox_info "Creating container '$CODEBOX_INSTANCE' ..."
 # The agent user reaches the entrypoint through the container's environment, so it is still
 # there after a `docker start` — the entrypoint is what restarts the editor.
@@ -41,6 +53,7 @@ docker run -d \
   --hostname codebox \
   -e "CODEBOX_AGENT_USER=$CODEBOX_AGENT_USER" \
   "${publish_args[@]}" \
+  ${mount_args[@]+"${mount_args[@]}"} \
   "$CODEBOX_DOCKER_IMAGE" >/dev/null
 
 codebox_info "Container created. Installing the tooling (a few minutes) ..."

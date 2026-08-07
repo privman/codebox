@@ -4,9 +4,11 @@ A small, self-contained toolkit for running a **cloud dev box** that you drive f
 laptop with [code-server](https://github.com/coder/code-server) (VS Code in the browser)
 and [Claude Code](https://claude.com/claude-code).
 
-> **Providers:** `gcp` (the default) puts the box on a Google Cloud VM reached over an IAP
-> tunnel. `docker` puts it in a container on the machine you are sitting at — same editor,
-> same tooling, no cloud account, no idle auto-suspend. Pick one with `--provider`; see
+> **Providers:** `docker` (the default) puts the box in a container on the machine you are
+> sitting at — no cloud account, nothing to pay for, and it can work directly on a directory
+> you already have. `gcp` puts it on a Google Cloud VM reached over an IAP tunnel, for when
+> the box should outlive your laptop or be bigger than it. Set `CODEBOX_PROVIDER` in
+> `codebox.env`, or pass `--provider` for one command; see
 > [Running locally in Docker](#running-locally-in-docker).
 
 You provision a VM once, connect to it over an **IAP-tunneled SSH port-forward**, and
@@ -38,9 +40,9 @@ laptop  ──IAP TCP tunnel──▶  sshd (:22, IAP range only)  ──local f
 
 ## Prerequisites
 
-For the **docker** provider, all you need is a working Docker install — skip to
-[Running locally in Docker](#running-locally-in-docker). The rest of this section is the
-**gcp** provider.
+For the **docker** provider — the default — all you need is a working Docker install; skip
+to [Running locally in Docker](#running-locally-in-docker). The rest of this section is the
+**gcp** provider, which you get with `CODEBOX_PROVIDER="gcp"` or `--provider gcp`.
 
 On your **laptop**:
 
@@ -178,29 +180,67 @@ tunnel whenever you save a change — that's how a
 
 ## Running locally in Docker
 
-Same box, same tooling, no cloud account: `--provider docker` builds an image, runs a
-container on this machine, and installs code-server, Claude Code and your repo into it with
-the *same* `vm/bootstrap.sh` the VM uses. Useful for trying codebox out, for working
-offline, or when a box does not need to outlive your laptop.
+The default. Same box, same tooling, no cloud account: `create` builds an image, runs a
+container on this machine, and installs code-server, Claude Code and your project into it
+with the *same* `vm/bootstrap.sh` the VM uses. Most machines are strong enough to run an
+agent locally, and the round trip is shorter than any tunnel.
 
 ```bash
-# 1. Configure (CODEBOX_PROJECT is not needed for this provider)
+# 1. Configure (CODEBOX_PROJECT and the other GCP settings are not used here)
 cp codebox.env.example codebox.env
-$EDITOR codebox.env                       # CODEBOX_REPO, ports, GitHub access if you want them
+$EDITOR codebox.env                       # project directory, ports, GitHub access
 
 # 2. Build the image, create the container, install the tooling (a few minutes)
-codebox --provider docker create
+codebox create
 
 # 3. Print the editor URL and password
-codebox --provider docker connect
+codebox connect
 #    -> browse to http://localhost:8080
 
 # ... and when you are done
-codebox --provider docker stop
+codebox stop
 ```
 
-The provider is per-invocation — there is no config key for it — so pass `--provider docker`
-each time, or alias it: `alias dbox='codebox --provider docker'`.
+**Choosing the provider.** `docker` is the default, so nothing above needs a flag. Set
+`CODEBOX_PROVIDER="gcp"` in `codebox.env` to make the cloud VM your default instead, or
+pass `--provider gcp` for a single command. The flag always wins over the config, and a
+`CODEBOX_BOX_<name>_PROVIDER` entry sets it per box — so one `codebox.env` can describe a
+local container *and* a cloud VM:
+
+```bash
+CODEBOX_BOX_local_PROVIDER="docker"
+CODEBOX_BOX_cloud_PROVIDER="gcp"
+# codebox --box local connect   /   codebox --box cloud connect
+```
+
+### Working on a directory you already have
+
+Point `CODEBOX_DOCKER_MOUNT` at a directory on this machine and it is bind-mounted into the
+box as the project folder, instead of cloning `CODEBOX_REPO` into it:
+
+```bash
+CODEBOX_DOCKER_MOUNT="~/src/my-project"    # -> /home/coder/my-project in the box
+```
+
+The box and your own editor are then looking at the same files — no clone, no pushing to
+move work across, and `codebox destroy` cannot take the project with it. code-server opens
+it by default, exactly as it would a clone. Setting this means `CODEBOX_REPO` is *not*
+cloned; `bootstrap` says so if both are set.
+
+The box user is built with your uid (`CODEBOX_DOCKER_UID`, defaulting to `id -u`) so files
+written from either side belong to the same person. Two caveats:
+
+- **Not compatible with `CODEBOX_AGENT_USER`.** The uid split gives the agent its own
+  account inside the box, which is *not* the uid the mount belongs to, so the agent could
+  not write to the project. `create` warns when both are set. Pick one: an isolated agent
+  uid, or a shared working directory.
+- **A mount is a hole in the blast radius.** The point of a box is that an agent running
+  without approvals can only reach what you gave it. A mounted directory is real files on
+  your real machine, and `--dangerously-skip-permissions` applies to them too. Mount the
+  project, not your home directory.
+
+Mounts are fixed when the container is created, like published ports — `connect` warns when
+the config and the container have drifted, and applying a change means `destroy && create`.
 
 **How it differs from the GCP provider:**
 
@@ -264,9 +304,11 @@ which is worth knowing if you run untrusted containers.
 | `codebox bootstrap` | Re-run the tooling install on an existing VM                       |
 | `codebox destroy`   | Delete the VM (and optionally the firewall rules)                  |
 
-Every command accepts an optional `--provider <name>` flag (default `gcp`). The table above
-describes the `gcp` provider; `docker` maps the same verbs onto a local container, with the
-differences listed in [Running locally in Docker](#running-locally-in-docker).
+Every command accepts an optional `--provider <name>` flag, which overrides
+`CODEBOX_PROVIDER` in `codebox.env` for that one invocation; without either, the provider is
+`docker`. The table above describes the `gcp` provider; `docker` maps the same verbs onto a
+local container, with the differences listed in
+[Running locally in Docker](#running-locally-in-docker).
 
 ## Repository layout
 
@@ -324,9 +366,12 @@ The first of these that exists wins:
 | `CODEBOX_AGENT_ALLOW_TOOLS` | *(empty)*      | Comma-separated allowlist; required with `dontAsk` |
 | `CODEBOX_GIT_AGENT_NAME`  | *(from the app)* | Author/committer name for Claude Code's commits     |
 | `CODEBOX_GIT_AGENT_EMAIL` | *(from the app)* | Author/committer email for Claude Code's commits    |
-| `CODEBOX_DOCKER_IMAGE`    | `codebox:local`  | `--provider docker`: image tag built by `create`    |
-| `CODEBOX_DOCKER_USER`     | `coder`          | `--provider docker`: login user inside the container |
-| `CODEBOX_DOCKER_BIND`     | `127.0.0.1`      | `--provider docker`: host interface ports are published on |
+| `CODEBOX_PROVIDER`        | `docker`         | Where the box lives: `docker` or `gcp`. `--provider` overrides it |
+| `CODEBOX_DOCKER_IMAGE`    | `codebox:local`  | docker: image tag built by `create`                 |
+| `CODEBOX_DOCKER_USER`     | `coder`          | docker: login user inside the container             |
+| `CODEBOX_DOCKER_BIND`     | `127.0.0.1`      | docker: host interface ports are published on       |
+| `CODEBOX_DOCKER_MOUNT`    | *(empty)*        | docker: host directory bind-mounted as the project folder, instead of cloning |
+| `CODEBOX_DOCKER_UID`      | *(your `id -u`)* | docker: uid the box user is built with, so a mount is writable from both sides |
 
 ## Running multiple codeboxes
 

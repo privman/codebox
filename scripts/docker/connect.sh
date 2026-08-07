@@ -28,6 +28,19 @@ if [ -n "$have" ] && [ "$want" != "$have" ]; then
   codebox_warn "  codebox --provider docker destroy && codebox --provider docker create"
 fi
 
+# Bind mounts are baked in at create time for the same reason, so a CODEBOX_DOCKER_MOUNT
+# that was added or repointed afterwards silently does nothing until the box is recreated.
+want_mount="$(codebox_mount_source)"
+if [ -n "$want_mount" ]; then
+  have_mounts="$(docker inspect -f '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' \
+                 "$CODEBOX_INSTANCE" 2>/dev/null || true)"
+  if ! printf '%s\n' "$have_mounts" | grep -qxF "$want_mount"; then
+    codebox_warn "CODEBOX_DOCKER_MOUNT is set to $want_mount, but the container does not mount it."
+    codebox_warn "Mounts are fixed when the container is created. To apply the change:"
+    codebox_warn "  codebox destroy && codebox create"
+  fi
+fi
+
 codebox_info "Waiting for code-server ..."
 codebox_wait_for_editor || \
   codebox_die "code-server did not come up in the box. Check 'docker logs $CODEBOX_INSTANCE'."

@@ -6,13 +6,20 @@ Context for Claude Code when working in this repo.
 
 `codebox` is a bash toolkit that provisions and manages a single dev box you connect to from
 a laptop, running code-server (browser VS Code) and Claude Code. It is not an application —
-it's operational tooling. Two providers: `gcp` (a cloud VM behind an IAP tunnel) and
-`docker` (a container on the machine you are sitting at). See `README.md` for the full model.
+it's operational tooling. Two providers: `docker` (a container on the machine you are
+sitting at — the default) and `gcp` (a cloud VM behind an IAP tunnel). The docker provider
+can bind-mount a host directory as the project folder (`CODEBOX_DOCKER_MOUNT`) instead of
+cloning into the box. See `README.md` for the full model.
 
 ## Layout
 
-- `bin/codebox` — provider-agnostic CLI dispatcher. Parses a `--provider` flag (`gcp` by
-  default, or `docker`) and execs the matching script in `scripts/<provider>/`.
+- `bin/codebox` — provider-agnostic CLI dispatcher. Resolves the provider (`--provider`
+  flag, else `CODEBOX_PROVIDER` from the config, else `docker`) and execs the matching
+  script in `scripts/<provider>/`.
+- `scripts/env-file.sh` — which `codebox.env` applies. Split out of `common.sh` because the
+  dispatcher needs it *before* it can pick a provider (the provider can be set in the
+  config), and sourcing `common.sh` that early would load a provider's world too soon. One
+  copy, two callers, so they can never disagree about which config is in play.
 - `scripts/common.sh` — provider-agnostic config loading (`codebox.env`), shared defaults,
   logging and validation. Also per-box resolution: `CODEBOX_BOX_<name>_<KEY>` overrides
   `CODEBOX_<KEY>` when `--box <name>` is given. The file is *sourced*, so it must stay

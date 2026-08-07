@@ -18,12 +18,39 @@ SELF="$(cd "$(dirname "$SOURCE")" && pwd)"
 ROOT="$(cd "$SELF/.." && pwd)"
 VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo unknown)"
 
-DEFAULT_PROVIDER="gcp"
+DEFAULT_PROVIDER="docker"
 SUPPORTED_PROVIDERS="gcp docker"
+
+# shellcheck source=../scripts/env-file.sh
+. "$ROOT/scripts/env-file.sh"
+
+# CODEBOX_PROVIDER out of the environment or codebox.env, or empty. The dispatcher has to
+# know the provider before it can source a provider's lib.sh (and therefore common.sh, which
+# is what normally loads the config), so it reads this one value for itself.
+configured_provider() {
+  local file value box_var
+  file="$(codebox_env_file_path "$ROOT")" || exit 1
+  if [ -z "$file" ]; then
+    printf '%s' "${CODEBOX_PROVIDER:-}"
+    return 0
+  fi
+  # Sourced in a subshell: codebox.env is arbitrary bash and none of it belongs in the
+  # dispatcher. Its output is dropped because the real load happens later in common.sh,
+  # which is where any warning it prints should surface — once, not twice.
+  value="$(
+    set -a
+    # shellcheck disable=SC1090
+    . "$file" >/dev/null 2>&1 || true
+    set +a
+    box_var="CODEBOX_BOX_${CODEBOX_BOX:-_}_PROVIDER"
+    printf '%s' "${!box_var:-${CODEBOX_PROVIDER:-}}"
+  )" || value=""
+  printf '%s' "$value"
+}
 
 usage() {
   cat <<'EOF'
-codebox - manage a cloud dev VM for Claude Code + code-server
+codebox - manage a dev box for Claude Code + code-server
 
 Usage: codebox [--provider <name>] <command>
 
@@ -44,16 +71,18 @@ Options:
   --box <name>        Which box in codebox.env to act on. Settings named
                       CODEBOX_BOX_<name>_<KEY> override the file-level
                       CODEBOX_<KEY> for that box. Default: the unnamed box.
-  --provider <name>   Where the box lives. Default: gcp
-                      gcp     a cloud VM reached over an IAP tunnel
+  --provider <name>   Where the box lives. Default: docker, or CODEBOX_PROVIDER
+                      from codebox.env when that is set.
                       docker  a container on this machine (no idle auto-suspend)
+                      gcp     a cloud VM reached over an IAP tunnel
 
 Configuration lives in codebox.env (copy codebox.env.example).
 EOF
 }
 
 # --- parse a global --provider flag from anywhere in the args ------------
-provider="$DEFAULT_PROVIDER"
+# Left empty so an explicit flag can be told apart from the fallback below.
+provider=""
 args=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -80,6 +109,13 @@ case "$cmd" in
   -h|--help|help) usage; exit 0 ;;
   -V|--version|version) echo "codebox $VERSION"; exit 0 ;;
 esac
+
+# --- resolve the provider ------------------------------------------------
+# The flag wins, then CODEBOX_PROVIDER (a CODEBOX_BOX_<name>_PROVIDER entry overrides it for
+# that box, the same way every other per-box setting resolves), then the default. Resolved
+# after the arg loop because --box has to be known before the per-box lookup.
+[ -n "$provider" ] || provider="$(configured_provider)"
+[ -n "$provider" ] || provider="$DEFAULT_PROVIDER"
 
 # --- validate provider ---------------------------------------------------
 is_supported=0

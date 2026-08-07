@@ -407,9 +407,22 @@ if [ -n "$PERMISSION_MODE" ] || [ -n "$DENY_TOOLS" ] || [ -n "$ALLOW_TOOLS" ]; t
 fi
 
 # --- project repo --------------------------------------------------------
-# Clone CODEBOX_REPO into the home directory and make its root the folder
-# code-server opens. Idempotent: an existing checkout is left alone.
-if [ -n "$REPO" ]; then
+# The project folder is either bind-mounted from the host (the docker provider's
+# CODEBOX_DOCKER_MOUNT, which arrives here as CODEBOX_PROJECT_DIR) or cloned from
+# CODEBOX_REPO. Either way its root becomes the folder code-server opens. Idempotent:
+# an existing checkout is left alone.
+repo_dir=""
+if [ -n "${CODEBOX_PROJECT_DIR:-}" ]; then
+  # The mount is the user's own working tree on the host. Cloning into it, or over it,
+  # is never the right move — so this branch only ever points the editor at it.
+  if [ -d "${CODEBOX_PROJECT_DIR}" ]; then
+    repo_dir="$CODEBOX_PROJECT_DIR"
+    log "Project directory is mounted from the host at $repo_dir; not cloning."
+  else
+    log "warning: CODEBOX_PROJECT_DIR='$CODEBOX_PROJECT_DIR' is not a directory in the box;"
+    log "         the mount did not arrive. Check 'docker inspect' for the container."
+  fi
+elif [ -n "$REPO" ]; then
   # Derive the checkout directory from the URI's last path segment. Handles
   # https://host/owner/repo, ssh://[user@]host/owner/repo and scp-style
   # git@host:owner/repo; the `.git` suffix is optional.
@@ -422,7 +435,6 @@ if [ -n "$REPO" ]; then
   repo_name="${repo_path##*/}"
   repo_name="${repo_name%.git}"              # `.git` suffix is optional
 
-  repo_dir=""
   if [ -z "$repo_name" ]; then
     log "warning: could not derive a directory name from CODEBOX_REPO='$REPO'; skipping clone."
   elif [ -d "$HOME/$repo_name/.git" ]; then
@@ -446,26 +458,26 @@ if [ -n "$REPO" ]; then
       log "         whose home is not the one 'codebox ssh' puts you in."
     fi
   fi
+fi
 
-  if [ -n "$repo_dir" ]; then
-    # code-server remembers the last folder you opened in coder.json and prefers it
-    # over anything else, so seeding that entry makes the repo the default folder.
-    # Only seed it when nothing is recorded yet — otherwise we'd yank the user out of
-    # whatever they last had open every time bootstrap is re-run.
-    coder_json="$user_data_dir/coder.json"
-    if [ -s "$coder_json" ] && jq -e '.query.folder // .query.workspace' "$coder_json" >/dev/null 2>&1; then
-      log "code-server already has a last-opened folder; leaving it as is."
+if [ -n "$repo_dir" ]; then
+  # code-server remembers the last folder you opened in coder.json and prefers it
+  # over anything else, so seeding that entry makes the repo the default folder.
+  # Only seed it when nothing is recorded yet — otherwise we'd yank the user out of
+  # whatever they last had open every time bootstrap is re-run.
+  coder_json="$user_data_dir/coder.json"
+  if [ -s "$coder_json" ] && jq -e '.query.folder // .query.workspace' "$coder_json" >/dev/null 2>&1; then
+    log "code-server already has a last-opened folder; leaving it as is."
+  else
+    [ -s "$coder_json" ] && jq -e . "$coder_json" >/dev/null 2>&1 || echo '{}' > "$coder_json"
+    tmp="$(mktemp)"
+    if jq --arg folder "$repo_dir" '.query = ((.query // {}) + {folder: $folder})' \
+         "$coder_json" > "$tmp" 2>/dev/null; then
+      mv "$tmp" "$coder_json"
+      log "code-server will open $repo_dir by default."
     else
-      [ -s "$coder_json" ] && jq -e . "$coder_json" >/dev/null 2>&1 || echo '{}' > "$coder_json"
-      tmp="$(mktemp)"
-      if jq --arg folder "$repo_dir" '.query = ((.query // {}) + {folder: $folder})' \
-           "$coder_json" > "$tmp" 2>/dev/null; then
-        mv "$tmp" "$coder_json"
-        log "code-server will open $repo_dir by default."
-      else
-        rm -f "$tmp"
-        log "warning: could not update $coder_json; code-server will open its usual default view."
-      fi
+      rm -f "$tmp"
+      log "warning: could not update $coder_json; code-server will open its usual default view."
     fi
   fi
 fi

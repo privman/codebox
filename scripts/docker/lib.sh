@@ -20,6 +20,17 @@ CODEBOX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Host interface the editor port is published on. Loopback by default, matching the
 # GCP provider's rule that nothing is reachable from outside the machine.
 : "${CODEBOX_DOCKER_BIND:=127.0.0.1}"
+# A host directory to bind-mount as the box's project folder, instead of cloning
+# CODEBOX_REPO into it. Empty means clone, which is the GCP provider's only option.
+: "${CODEBOX_DOCKER_MOUNT:=}"
+# The uid the box user is built with. Matching the host's is what makes a bind mount
+# usable from both sides: a mismatch leaves every file the box writes owned by a
+# stranger on the host, and vice versa. Root on the host falls back to the old fixed
+# 1000, because uid 0 already exists in the image.
+if [ -z "${CODEBOX_DOCKER_UID:-}" ]; then
+  CODEBOX_DOCKER_UID="$(id -u)"
+  [ "$CODEBOX_DOCKER_UID" = 0 ] && CODEBOX_DOCKER_UID=1000
+fi
 
 CODEBOX_DOCKER_HOME="/home/${CODEBOX_DOCKER_USER}"
 # Whose home the editor's config lives in: the agent's when the uid split is on, otherwise
@@ -82,6 +93,46 @@ codebox_wait_for_editor() {
     sleep 2
   done
   return 1
+}
+
+# --- the mounted project directory ---------------------------------------
+# Absolute host path of CODEBOX_DOCKER_MOUNT, or nothing when it is not set. Docker needs
+# an absolute path: given a relative one it silently creates a *named volume* instead,
+# which shows up as an empty project folder rather than as an error.
+codebox_mount_source() {
+  local path="${CODEBOX_DOCKER_MOUNT:-}"
+  [ -n "$path" ] || return 0
+  case "$path" in
+    "~")   path="$HOME" ;;
+    "~/"*) path="$HOME/${path#\~/}" ;;
+  esac
+  [ -d "$path" ] || codebox_die "CODEBOX_DOCKER_MOUNT is not a directory: $CODEBOX_DOCKER_MOUNT"
+  path="$(cd "$path" && pwd)"          # absolute, and symlinks resolved
+  [ "$path" != / ] || codebox_die "CODEBOX_DOCKER_MOUNT cannot be '/'; point it at a project directory."
+  printf '%s' "$path"
+}
+
+# Where that directory lands inside the box: the same <home>/<name> shape a clone would
+# take, so code-server opens the project the same way whichever way it got there.
+codebox_mount_target() {
+  local src
+  src="$(codebox_mount_source)" || return 1
+  [ -n "$src" ] || return 0
+  printf '%s/%s' "$CODEBOX_BOX_HOME" "$(basename "$src")"
+}
+
+# The uid split and a bind mount do not currently fit together: the mount arrives owned by
+# CODEBOX_DOCKER_UID (the login user's), while the agent is a separate account created
+# inside the box with a uid of its own, so it cannot write to its own project directory.
+# Warn rather than fail — a read-only look at the code is still useful, and the box is fine
+# in every other respect.
+codebox_check_mount_agent_split() {
+  [ -n "${CODEBOX_DOCKER_MOUNT:-}" ] || return 0
+  [ -n "${CODEBOX_AGENT_USER:-}" ] || return 0
+  codebox_warn "CODEBOX_DOCKER_MOUNT with CODEBOX_AGENT_USER: the mount belongs to uid $CODEBOX_DOCKER_UID"
+  codebox_warn "(the login user), but the agent runs as '$CODEBOX_AGENT_USER' with a different uid, so it"
+  codebox_warn "will not be able to write to the mounted project. Drop CODEBOX_AGENT_USER for a box you"
+  codebox_warn "want the agent to edit a mounted directory in."
 }
 
 # The -p arguments for the editor port plus CODEBOX_ADDITIONAL_PORTS, one per line.
