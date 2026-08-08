@@ -172,7 +172,7 @@ codebox_supervise() {
       codebox_kill_tunnel
       return 0
     fi
-    if [ -n "${CODEBOX_SYNC_DIR:-}" ]; then
+    if codebox_sync_enabled; then
       codebox_sync_download_announced && codebox_sync_run down
       current_print="$(codebox_sync_upload_fingerprint)"
       if [ "$current_print" != "$SYNC_UPLOAD_PRINT" ]; then
@@ -291,7 +291,7 @@ EOF
   codebox_start_tunnel
   # Pull once on connect: the box may have produced something while we were away, and
   # nothing announced it because nobody was listening.
-  if [ -n "${CODEBOX_SYNC_DIR:-}" ]; then
+  if codebox_sync_enabled; then
     SYNC_SEEN=0
     SYNC_UPLOAD_PRINT="$(codebox_sync_upload_fingerprint)"
     codebox_sync_run down

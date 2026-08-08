@@ -28,23 +28,42 @@ CODEBOX_IAP_RANGE="35.235.240.0/20"
 # Directions are named from this machine's point of view, on both sides.
 : "${CODEBOX_SYNC_REMOTE_DIR:=}"
 
-# Where the pair lives in the box. The agent's home when the uid split is on, because the
-# agent is the only thing in there that reads or writes them.
+# Is the file-transfer pair switched on at all?
+codebox_sync_enabled() {
+  case "${CODEBOX_SYNC_DIR:-}" in
+    ""|off|none|no) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# Where the pair lives in the box: inside the checkout, so it sits in the editor's file
+# explorer beside the code. Falls back to the home directory when there is no repo to be
+# inside of. The home is the agent's when the uid split is on, because the agent is the
+# only thing in the box that reads or writes these.
 codebox_sync_remote_dir() {
-  [ -n "${CODEBOX_SYNC_DIR:-}" ] || return 0
+  local home repo
+  codebox_sync_enabled || return 0
   if [ -n "${CODEBOX_SYNC_REMOTE_DIR:-}" ]; then
     printf '%s' "$CODEBOX_SYNC_REMOTE_DIR"
-  elif [ -n "${CODEBOX_AGENT_USER:-}" ]; then
-    printf '/home/%s/codebox-sync' "$CODEBOX_AGENT_USER"
+    return 0
+  fi
+  if [ -n "${CODEBOX_AGENT_USER:-}" ]; then
+    home="/home/${CODEBOX_AGENT_USER}"
   else
-    printf '~/codebox-sync'
+    home="/home/$(codebox_sync_remote_user)"
+  fi
+  repo="$(codebox_repo_dir_name)"
+  if [ -n "$repo" ]; then
+    printf '%s/%s/.codebox/sync' "$home" "$repo"
+  else
+    printf '%s/.codebox/sync' "$home"
   fi
 }
 
 # Absolute path of the local half, created if missing.
 codebox_sync_local_dir() {
   local path="${CODEBOX_SYNC_DIR:-}"
-  [ -n "$path" ] || return 0
+  codebox_sync_enabled || return 0
   case "$path" in
     "~")   path="$HOME" ;;
     "~/"*) path="$HOME/${path#\~/}" ;;
@@ -55,7 +74,9 @@ codebox_sync_local_dir() {
   esac
   mkdir -p "$path/download" "$path/upload" || \
     codebox_die "could not create the sync directories under $path"
-  printf '%s' "$path"
+  # Resolved after creating it, so the default './.codebox/sync' reads as a real path in
+  # the log lines rather than carrying a './' through the middle of it.
+  (cd "$path" && pwd)
 }
 
 # rsync's transport. `start-iap-tunnel --listen-on-stdin` is built to be a ProxyCommand,
@@ -82,8 +103,8 @@ codebox_sync_remote_user() {
 # here too; without it the directory only ever grows and stops reflecting the box.
 codebox_sync_pull() {
   local local_dir remote_dir
+  codebox_sync_enabled || return 0
   local_dir="$(codebox_sync_local_dir)" || return 1
-  [ -n "$local_dir" ] || return 0
   remote_dir="$(codebox_sync_remote_dir)"
   rsync -rlptz --delete -e "$(codebox_sync_rsh)" \
     "$(codebox_sync_remote_user)@$CODEBOX_INSTANCE:$remote_dir/download/" \
@@ -93,8 +114,8 @@ codebox_sync_pull() {
 # Push our upload/ into the box's.
 codebox_sync_push() {
   local local_dir remote_dir
+  codebox_sync_enabled || return 0
   local_dir="$(codebox_sync_local_dir)" || return 1
-  [ -n "$local_dir" ] || return 0
   remote_dir="$(codebox_sync_remote_dir)"
   rsync -rlptz --delete -e "$(codebox_sync_rsh)" \
     "$local_dir/upload/" \
@@ -105,15 +126,19 @@ codebox_sync_push() {
 # something in without going near the network.
 codebox_sync_upload_fingerprint() {
   local local_dir
+  codebox_sync_enabled || return 0
   local_dir="$(codebox_sync_local_dir)" || return 0
-  [ -n "$local_dir" ] || return 0
   find "$local_dir/upload" -type f -exec ls -ld {} + 2>/dev/null | cksum
 }
 
+# Sync is on unless it was turned off, so a machine without rsync must not be stopped from
+# connecting over it — say what is missing and carry on without the transfer directories.
 codebox_check_rsync() {
-  [ -n "${CODEBOX_SYNC_DIR:-}" ] || return 0
-  command -v rsync >/dev/null 2>&1 || \
-    codebox_die "CODEBOX_SYNC_DIR is set but rsync is not installed; the file-transfer directories need it."
+  codebox_sync_enabled || return 0
+  command -v rsync >/dev/null 2>&1 && return 0
+  codebox_warn "rsync is not installed, so the download/ and upload/ directories are off."
+  codebox_warn "Install rsync, or set CODEBOX_SYNC_DIR=\"off\" to stop mentioning it."
+  CODEBOX_SYNC_DIR="off"
 }
 
 codebox_check_gcloud() {

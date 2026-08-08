@@ -50,8 +50,12 @@ for the full model.
   `connect` reads it through a `tail -F` carried on the tunnel's own SSH session. Anything
   added to that channel has to stay silent when idle — traffic on port 22 is what the idle
   timer measures, so a chatty channel would stop the box ever suspending.
-- `CODEBOX_SYNC_DIR` (gcp only) keeps two one-way directories — `download/` out of the box,
-  `upload/` into it, directions named from the laptop. It rides that same notices channel:
+- `CODEBOX_SYNC_DIR` (gcp only, on by default at `./.codebox/sync`, `off` disables) keeps
+  two one-way directories — `download/` out of the box, `upload/` into it, directions named
+  from the laptop. Both sit inside the worktree so they show in the editor's explorer, which
+  is why the box-side half is created *after* bootstrap-user.sh: the checkout has to exist
+  first, and making the directory earlier would leave the clone refusing a non-empty target.
+  It rides that same notices channel:
   `vm/sync-watch.sh` announces download changes over inotify, and the upload half
   fingerprints a *local* directory, so neither side polls over ssh. That is a hard
   constraint, not a preference — polling would defeat auto-suspend and the box would bill

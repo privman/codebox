@@ -227,42 +227,6 @@ if [ -n "$SHARED_DIR" ]; then
   fi
 fi
 
-# --- the file-transfer directories ---------------------------------------
-# download/ and upload/ belong to whoever runs the agent, since the agent is the only
-# thing in the box that reads and writes them. The client copies into and out of them
-# over the same IAP tunnel it already holds, so nothing here is exposed to the network.
-if [ -n "$SYNC_DIR" ]; then
-  sync_user="${AGENT_USER:-$(id -un)}"
-  # The client sends this as a plain string, so a leading ~ arrives literally — expanding
-  # it here rather than letting `install -d` create a directory actually called '~'.
-  case "$SYNC_DIR" in
-    "~")   SYNC_DIR="$(getent passwd "$sync_user" | cut -d: -f6)" ;;
-    "~/"*) SYNC_DIR="$(getent passwd "$sync_user" | cut -d: -f6)/${SYNC_DIR#\~/}" ;;
-  esac
-  log "Setting up the file-transfer directories under $SYNC_DIR ..."
-  sudo install -d -m 0755 -o "$sync_user" -g "$sync_user" "$SYNC_DIR"
-  sudo install -d -m 0755 -o "$sync_user" -g "$sync_user" "$SYNC_DIR/download"
-  sudo install -d -m 0755 -o "$sync_user" -g "$sync_user" "$SYNC_DIR/upload"
-
-  if in_container; then
-    # No systemd, and no tunnel to announce over: the docker provider shares a directory
-    # outright (CODEBOX_DOCKER_SHARED_DIR) rather than copying files across a network.
-    log "Container: skipping the download watcher (nothing to announce to)."
-  else
-    sudo apt-get install -y inotify-tools
-    sudo install -d -m 0755 /etc/codebox
-    printf 'CODEBOX_SYNC_DOWNLOAD_DIR=%s\n' "$SYNC_DIR/download" \
-      | sudo tee /etc/codebox/sync.env >/dev/null
-    sudo chmod 0644 /etc/codebox/sync.env
-    sudo install -m 0755 "$HERE/sync-watch.sh" /usr/local/bin/codebox-sync-watch
-    sudo install -m 0644 "$HERE/systemd/codebox-sync-watch.service" \
-      /etc/systemd/system/codebox-sync-watch.service
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now codebox-sync-watch.service
-    log "Watching $SYNC_DIR/download; connected clients are told when it changes."
-  fi
-fi
-
 # --- the agent's half ----------------------------------------------------
 # Claude Code, the editor config, the GitHub helpers and the clone all live in the agent's
 # home, so they are installed by bootstrap-user.sh running as that user. Without the split
@@ -300,6 +264,58 @@ if [ -n "$AGENT_USER" ]; then
   sudo -u "$AGENT_USER" -H env "${user_env[@]}" bash "$stage/bootstrap-user.sh"
 else
   env "${user_env[@]}" bash "$HERE/bootstrap-user.sh"
+fi
+
+# --- the file-transfer directories ---------------------------------------
+# download/ and upload/ belong to whoever runs the agent, since the agent is the only thing
+# in the box that reads and writes them. The client copies into and out of them over the
+# same IAP tunnel it already holds, so nothing here is exposed to the network.
+#
+# This runs *after* the agent's half on purpose: the pair lives inside the checkout so it
+# shows up in the editor's file explorer, and the checkout is what the agent's half has
+# just made. Creating it any earlier would leave a non-empty directory sitting where the
+# clone wants to go, and the clone would skip itself.
+if [ -n "$SYNC_DIR" ]; then
+  sync_user="${AGENT_USER:-$(id -un)}"
+  # The client sends this as a plain string, so a leading ~ arrives literally — expanding
+  # it here rather than letting `install -d` create a directory actually called '~'.
+  case "$SYNC_DIR" in
+    "~")   SYNC_DIR="$(getent passwd "$sync_user" | cut -d: -f6)" ;;
+    "~/"*) SYNC_DIR="$(getent passwd "$sync_user" | cut -d: -f6)/${SYNC_DIR#\~/}" ;;
+  esac
+  log "Setting up the file-transfer directories under $SYNC_DIR ..."
+  sudo install -d -m 0755 -o "$sync_user" -g "$sync_user" "$SYNC_DIR"
+  sudo install -d -m 0755 -o "$sync_user" -g "$sync_user" "$SYNC_DIR/download"
+  sudo install -d -m 0755 -o "$sync_user" -g "$sync_user" "$SYNC_DIR/upload"
+
+  # Keep it out of `git status` without touching a tracked .gitignore — info/exclude is
+  # local to the clone, so this is codebox's business and not a change to the repo.
+  sync_repo="${SYNC_DIR%/.codebox/sync}"
+  if [ "$sync_repo" != "$SYNC_DIR" ] && [ -d "$sync_repo/.git" ]; then
+    if ! sudo grep -qxF '.codebox/' "$sync_repo/.git/info/exclude" 2>/dev/null; then
+      printf '.codebox/\n' | sudo tee -a "$sync_repo/.git/info/exclude" >/dev/null
+      log "Added .codebox/ to $sync_repo/.git/info/exclude."
+    fi
+  fi
+
+  if in_container; then
+    # No systemd, and no tunnel to announce over: the docker provider shares a directory
+    # outright (CODEBOX_DOCKER_SHARED_DIR) rather than copying files across a network.
+    log "Container: skipping the download watcher (nothing to announce to)."
+  else
+    sudo apt-get install -y inotify-tools
+    sudo install -d -m 0755 /etc/codebox
+    printf 'CODEBOX_SYNC_DOWNLOAD_DIR=%s\n' "$SYNC_DIR/download" \
+      | sudo tee /etc/codebox/sync.env >/dev/null
+    sudo chmod 0644 /etc/codebox/sync.env
+    sudo install -m 0755 "$HERE/sync-watch.sh" /usr/local/bin/codebox-sync-watch
+    sudo install -m 0644 "$HERE/systemd/codebox-sync-watch.service" \
+      /etc/systemd/system/codebox-sync-watch.service
+    sudo systemctl daemon-reload
+    sudo systemctl restart codebox-sync-watch.service
+    sudo systemctl enable codebox-sync-watch.service >/dev/null 2>&1 || true
+    log "Watching $SYNC_DIR/download; connected clients are told when it changes."
+  fi
 fi
 if in_container; then
   # The image's entrypoint runs code-server and picks it up within a few seconds of

@@ -14,6 +14,10 @@ codebox*.env
 # Release artifacts (packaging/build.sh writes them; CI uploads them to the release)
 /dist/
 
+# The download/upload pair codebox keeps inside the worktree (CODEBOX_SYNC_DIR). Ignored
+# here too, because this repo is itself something you might open in a box.
+.codebox/
+
 # Editor / OS cruft
 .DS_Store
 *.log

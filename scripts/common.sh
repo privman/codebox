@@ -98,7 +98,9 @@ _codebox_apply_box
 : "${CODEBOX_GITHUB_WRITE_REPOS:=}"
 : "${CODEBOX_AGENT_USER:=}"
 : "${CODEBOX_AGENT_UID:=}"
-: "${CODEBOX_SYNC_DIR:=}"
+# Inside the worktree, so the two directories show up in the editor's file explorer next to
+# the code rather than somewhere you have to go looking. `off` turns the whole thing off.
+: "${CODEBOX_SYNC_DIR:=./.codebox/sync}"
 : "${CODEBOX_CLAUDE_TOKEN_FILE:=}"
 : "${CODEBOX_SSH_KEY_FILE:=}"
 : "${CODEBOX_CLAUDE_MARKETPLACES:=}"
@@ -232,6 +234,22 @@ codebox_validate_agent_policy() {
 codebox_tools_json() {
   [ -n "${1:-}" ] || return 0
   printf '%s' "$1" | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))'
+}
+
+# The directory name a clone of CODEBOX_REPO lands in — the URI's last path segment, with
+# the optional `.git` removed. vm/bootstrap-user.sh derives the same name when it clones;
+# this copy is what lets the client work out a path inside the checkout without asking the
+# box. Empty when there is no repo, or nothing usable in the URI.
+codebox_repo_dir_name() {
+  local path="${CODEBOX_REPO:-}"
+  [ -n "$path" ] || return 0
+  case "$path" in
+    *://*) path="${path#*://}" ;;
+    *@*:*) path="${path#*:}" ;;
+  esac
+  path="${path%/}"
+  path="${path##*/}"
+  printf '%s' "${path%.git}"
 }
 
 # Sanity-check CODEBOX_REPO before we spend minutes building a box. The actual URI

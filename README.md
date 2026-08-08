@@ -182,16 +182,21 @@ tunnel whenever you save a change — that's how a
 
 The docker provider shares a directory outright. Over an IAP tunnel that is not on the
 table, so the gcp provider keeps two **one-way** directories instead, named for the
-direction as seen from your laptop:
+direction as seen from your laptop. This is on by default and lives inside the worktree, so
+both ends show up in the editor's file explorer beside the code:
 
-```bash
-CODEBOX_SYNC_DIR="~/codebox-sync"
-```
-
-| | the agent writes | you get it |
+| | who writes it | where it goes |
 | --- | --- | --- |
-| `~/codebox-sync/download/` | `~/codebox-sync/download/` in the box | mirrored down to your laptop |
-| `~/codebox-sync/upload/` | you write it on the laptop | mirrored up into the box |
+| `.codebox/sync/download/` | the agent, in the box | mirrored down to your laptop |
+| `.codebox/sync/upload/` | you, on your laptop | mirrored up into the box |
+
+In the box that path is inside the clone (`~/<repo>/.codebox/sync`); on your laptop it is
+relative to wherever you run `codebox`. Override either with `CODEBOX_SYNC_DIR` and
+`CODEBOX_SYNC_REMOTE_DIR`, or set `CODEBOX_SYNC_DIR="off"` to turn the whole thing off.
+
+codebox adds `.codebox/` to the clone's `.git/info/exclude` in the box, so it stays out of
+`git status` without editing a tracked `.gitignore`. Add `.codebox/` to your own
+`.gitignore` if you would rather commit the rule.
 
 One-way each is deliberate. A directory written from both ends across a network needs
 conflict resolution, and two one-way directories have none to need — which is why this is
@@ -435,8 +440,8 @@ The first of these that exists wins:
 | `CODEBOX_GIT_AGENT_NAME`  | *(from the app)* | Author/committer name for Claude Code's commits     |
 | `CODEBOX_GIT_AGENT_EMAIL` | *(from the app)* | Author/committer email for Claude Code's commits    |
 | `CODEBOX_PROVIDER`        | `docker`         | Where the box lives: `docker` or `gcp`. `--provider` overrides it |
-| `CODEBOX_SYNC_DIR`        | *(empty)*        | gcp: local directory holding `download/` and `upload/`, synced while connected |
-| `CODEBOX_SYNC_REMOTE_DIR` | `~/codebox-sync` | gcp: where that pair lives in the box |
+| `CODEBOX_SYNC_DIR`        | `./.codebox/sync` | gcp: local directory holding `download/` and `upload/`, synced while connected. `off` disables |
+| `CODEBOX_SYNC_REMOTE_DIR` | `~/<repo>/.codebox/sync` | gcp: where that pair lives in the box |
 | `CODEBOX_AGENT_UID`       | *(useradd's pick)* | uid the agent account is created with; pinned so it survives a rebuild |
 | `CODEBOX_DOCKER_IMAGE`    | `codebox:local`  | docker: image tag built by `create`                 |
 | `CODEBOX_DOCKER_USER`     | `coder`          | docker: login user inside the container             |
