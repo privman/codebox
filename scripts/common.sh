@@ -97,6 +97,7 @@ _codebox_apply_box
 : "${CODEBOX_GITHUB_TOKEN_FILE:=}"
 : "${CODEBOX_GITHUB_WRITE_REPOS:=}"
 : "${CODEBOX_AGENT_USER:=}"
+: "${CODEBOX_AGENT_UID:=}"
 : "${CODEBOX_CLAUDE_TOKEN_FILE:=}"
 : "${CODEBOX_SSH_KEY_FILE:=}"
 : "${CODEBOX_CLAUDE_MARKETPLACES:=}"
@@ -133,6 +134,21 @@ codebox_additional_ports() {
 # CODEBOX_AGENT_USER becomes a unix account inside the box, so reject anything useradd
 # would refuse before we are halfway through a bootstrap. codebox-git is ours.
 codebox_validate_agent_user() {
+  # A pinned uid without an agent to give it to is a config that does nothing; say so
+  # rather than let someone believe the split is on.
+  if [ -n "${CODEBOX_AGENT_UID:-}" ] && [ -z "${CODEBOX_AGENT_USER:-}" ]; then
+    codebox_die "CODEBOX_AGENT_UID is set but CODEBOX_AGENT_USER is empty; there is no agent account to pin."
+  fi
+  if [ -n "${CODEBOX_AGENT_UID:-}" ]; then
+    case "$CODEBOX_AGENT_UID" in
+      *[!0-9]*|"") codebox_die "CODEBOX_AGENT_UID must be a number; got '$CODEBOX_AGENT_UID'." ;;
+    esac
+    # Below 1000 is the system range on Debian, where it would collide with a packaged
+    # account; 0 would be root.
+    [ "$CODEBOX_AGENT_UID" -ge 1000 ] 2>/dev/null || \
+      codebox_die "CODEBOX_AGENT_UID must be 1000 or above (it is a login account); got '$CODEBOX_AGENT_UID'."
+  fi
+
   [ -n "${CODEBOX_AGENT_USER:-}" ] || return 0
   case "$CODEBOX_AGENT_USER" in
     codebox-git|root) codebox_die "CODEBOX_AGENT_USER cannot be '$CODEBOX_AGENT_USER'; it is reserved." ;;

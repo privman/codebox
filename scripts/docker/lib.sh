@@ -23,6 +23,16 @@ CODEBOX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # A host directory to bind-mount as the box's project folder, instead of cloning
 # CODEBOX_REPO into it. Empty means clone, which is the GCP provider's only option.
 : "${CODEBOX_DOCKER_MOUNT:=}"
+# The same idea, but codebox creates and owns the directory instead of adopting one of
+# yours: inside the box it belongs to the agent, and you get read/write through an ACL.
+# This is the one that works alongside CODEBOX_AGENT_USER.
+: "${CODEBOX_DOCKER_SHARED_DIR:=}"
+# The uid the agent account is created with inside the box. Pinned because it is the only
+# thing that crosses the bind mount, so it has to survive a rebuild for the ACLs on files
+# already in a shared directory to keep matching.
+if [ -n "${CODEBOX_AGENT_USER:-}" ] && [ -z "${CODEBOX_AGENT_UID:-}" ]; then
+  CODEBOX_AGENT_UID=2000
+fi
 # The uid the box user is built with. Matching the host's is what makes a bind mount
 # usable from both sides: a mismatch leaves every file the box writes owned by a
 # stranger on the host, and vice versa. Root on the host falls back to the old fixed
@@ -121,18 +131,53 @@ codebox_mount_target() {
   printf '%s/%s' "$CODEBOX_BOX_HOME" "$(basename "$src")"
 }
 
-# The uid split and a bind mount do not currently fit together: the mount arrives owned by
-# CODEBOX_DOCKER_UID (the login user's), while the agent is a separate account created
-# inside the box with a uid of its own, so it cannot write to its own project directory.
-# Warn rather than fail — a read-only look at the code is still useful, and the box is fine
-# in every other respect.
+# Absolute host path of CODEBOX_DOCKER_SHARED_DIR, or nothing. Unlike the mount above this
+# one is created if it is missing: the whole point is that it belongs to codebox rather than
+# being a directory of yours that we start rearranging the ownership of.
+codebox_shared_dir_source() {
+  local path="${CODEBOX_DOCKER_SHARED_DIR:-}"
+  [ -n "$path" ] || return 0
+  case "$path" in
+    "~")   path="$HOME" ;;
+    "~/"*) path="$HOME/${path#\~/}" ;;
+  esac
+  case "$path" in
+    /*) ;;
+    *)  path="$PWD/$path" ;;
+  esac
+  [ -e "$path" ] || mkdir -p "$path" || codebox_die "could not create CODEBOX_DOCKER_SHARED_DIR: $path"
+  [ -d "$path" ] || codebox_die "CODEBOX_DOCKER_SHARED_DIR exists but is not a directory: $path"
+  path="$(cd "$path" && pwd)"
+  [ "$path" != / ] || codebox_die "CODEBOX_DOCKER_SHARED_DIR cannot be '/'."
+  printf '%s' "$path"
+}
+
+# Where it lands in the box: same <home>/<name> shape as a clone or a mount.
+codebox_shared_dir_target() {
+  local src
+  src="$(codebox_shared_dir_source)" || return 1
+  [ -n "$src" ] || return 0
+  printf '%s/%s' "$CODEBOX_BOX_HOME" "$(basename "$src")"
+}
+
+# The two directory settings do different things to ownership, so having both on is a
+# config with no sensible reading.
+codebox_validate_project_dir() {
+  if [ -n "${CODEBOX_DOCKER_MOUNT:-}" ] && [ -n "${CODEBOX_DOCKER_SHARED_DIR:-}" ]; then
+    codebox_die "set either CODEBOX_DOCKER_MOUNT or CODEBOX_DOCKER_SHARED_DIR, not both: the first adopts a directory of yours as-is, the second creates one owned by the agent."
+  fi
+}
+
+# CODEBOX_DOCKER_MOUNT adopts a directory of yours as-is, which means it keeps your uid and
+# the agent — a separate account under the uid split — cannot write to it. The shared
+# directory exists precisely to fix that, so point at it rather than just complaining.
 codebox_check_mount_agent_split() {
   [ -n "${CODEBOX_DOCKER_MOUNT:-}" ] || return 0
   [ -n "${CODEBOX_AGENT_USER:-}" ] || return 0
   codebox_warn "CODEBOX_DOCKER_MOUNT with CODEBOX_AGENT_USER: the mount belongs to uid $CODEBOX_DOCKER_UID"
-  codebox_warn "(the login user), but the agent runs as '$CODEBOX_AGENT_USER' with a different uid, so it"
-  codebox_warn "will not be able to write to the mounted project. Drop CODEBOX_AGENT_USER for a box you"
-  codebox_warn "want the agent to edit a mounted directory in."
+  codebox_warn "(yours), but the agent runs as '$CODEBOX_AGENT_USER' under a uid of its own, so it will not"
+  codebox_warn "be able to write to the mounted project. Use CODEBOX_DOCKER_SHARED_DIR instead — it gives"
+  codebox_warn "you both read/write on one directory — or drop CODEBOX_AGENT_USER to share a single uid."
 }
 
 # The -p arguments for the editor port plus CODEBOX_ADDITIONAL_PORTS, one per line.

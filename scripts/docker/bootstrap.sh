@@ -10,14 +10,17 @@ codebox_validate_repo
 codebox_validate_github
 codebox_validate_agent_user
 codebox_validate_agent_policy
+codebox_validate_project_dir
 codebox_check_mount_agent_split
 
-# A mounted project directory is already populated, so the bootstrap must not clone over
-# it. It wins when both are set: the mount is the user's own working tree, and burying it
+# A mounted project directory is already there, so the bootstrap must not clone over it. It
+# wins when CODEBOX_REPO is also set: the directory is where the work lives, and burying it
 # under a fresh checkout is not something to do quietly.
 project_dir="$(codebox_mount_target)"
+shared_dir="$(codebox_shared_dir_target)"
+[ -n "$project_dir" ] || project_dir="$shared_dir"
 if [ -n "$project_dir" ] && [ -n "$CODEBOX_REPO" ]; then
-  codebox_warn "both CODEBOX_DOCKER_MOUNT and CODEBOX_REPO are set; using the mount and not cloning."
+  codebox_warn "a project directory is mounted and CODEBOX_REPO is set; using the directory and not cloning."
 fi
 
 state="$(codebox_container_state)"
@@ -67,6 +70,9 @@ docker exec -u "$CODEBOX_DOCKER_USER" \
   -e "CODEBOX_IDLE_TIMEOUT_MIN=0" \
   -e "CODEBOX_REPO=$CODEBOX_REPO" \
   -e "CODEBOX_PROJECT_DIR=$project_dir" \
+  -e "CODEBOX_SHARED_DIR=$shared_dir" \
+  -e "CODEBOX_SHARED_DIR_PEER_UID=$CODEBOX_DOCKER_UID" \
+  -e "CODEBOX_AGENT_UID=$CODEBOX_AGENT_UID" \
   -e "CODEBOX_GITHUB_APP_ID=$CODEBOX_GITHUB_APP_ID" \
   -e "CODEBOX_GITHUB_APP_INSTALLATION_ID=$CODEBOX_GITHUB_APP_INSTALLATION_ID" \
   -e "CODEBOX_GITHUB_BOT_NAME=$CODEBOX_GITHUB_BOT_NAME" \

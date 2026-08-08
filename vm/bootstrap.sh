@@ -18,8 +18,17 @@ GH_WRITE_REPOS="${CODEBOX_GITHUB_WRITE_REPOS:-}"
 # Empty means one uid for everything, as codebox has always worked. A username here turns
 # on privilege separation: see the agent / key separation section below.
 AGENT_USER="${CODEBOX_AGENT_USER:-}"
+# Pinning the agent's uid matters when a directory is shared with the host: the uid is the
+# only thing that crosses a bind mount, so an agent that came back with a different number
+# after a rebuild would no longer match the ACLs on the files it wrote last time.
+AGENT_UID="${CODEBOX_AGENT_UID:-}"
 SPLIT=0
 [ -z "$AGENT_USER" ] || SPLIT=1
+# A host directory shared with the box, already mounted at this path. Owned by whoever runs
+# the agent, with SHARED_DIR_PEER_UID (the human, on the other side of the mount) given
+# read/write through a POSIX ACL.
+SHARED_DIR="${CODEBOX_SHARED_DIR:-}"
+SHARED_DIR_PEER_UID="${CODEBOX_SHARED_DIR_PEER_UID:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\033[1;32m[codebox]\033[0m %s\n' "$*"; }
@@ -37,7 +46,7 @@ in_container() { [ "$IN_CONTAINER" = 1 ]; }
 log "Updating apt and installing base packages ..."
 sudo apt-get update -y
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  curl git build-essential ca-certificates gnupg ripgrep jq tmux openssh-client
+  curl git build-essential ca-certificates gnupg ripgrep jq tmux openssh-client acl
 
 # --- GitHub CLI ----------------------------------------------------------
 # From GitHub's own apt repo; the Debian package lags badly. Checked by path, not by
@@ -84,8 +93,18 @@ tools_json() {
 
 if [ -n "$AGENT_USER" ]; then
   log "Setting up privilege separation (agent: $AGENT_USER, key holder: codebox-git) ..."
-  id -u "$AGENT_USER" >/dev/null 2>&1 || \
-    sudo useradd --create-home --shell /bin/bash "$AGENT_USER"
+  if ! id -u "$AGENT_USER" >/dev/null 2>&1; then
+    if [ -n "$AGENT_UID" ]; then
+      sudo useradd --create-home --shell /bin/bash --uid "$AGENT_UID" "$AGENT_USER"
+    else
+      sudo useradd --create-home --shell /bin/bash "$AGENT_USER"
+    fi
+  elif [ -n "$AGENT_UID" ] && [ "$(id -u "$AGENT_USER")" != "$AGENT_UID" ]; then
+    # Changing it under a populated home would leave files behind owned by the old number,
+    # so this is a rebuild-the-box situation rather than something to fix in place.
+    log "warning: $AGENT_USER already exists with uid $(id -u "$AGENT_USER"), not CODEBOX_AGENT_UID=$AGENT_UID."
+    log "         Files shared with the host will not match. Recreate the box to apply the change."
+  fi
   id -u codebox-git >/dev/null 2>&1 || \
     sudo useradd --system --create-home --home-dir /var/lib/codebox-git \
                  --shell /usr/sbin/nologin codebox-git
@@ -98,6 +117,20 @@ if [ -n "$AGENT_USER" ]; then
 
   AGENT_HOME="$(getent passwd "$AGENT_USER" | cut -d: -f6)"
   [ -n "$AGENT_HOME" ] || { log "error: could not resolve $AGENT_USER's home"; exit 1; }
+
+  # Docker creates the parent directories of a bind mount before the container starts, and
+  # creates them as root. With a shared directory under the agent's home that means
+  # /home/<agent> already exists by the time useradd runs, so useradd leaves it alone —
+  # root-owned, and without the skel files. The agent then cannot write to its own home.
+  # Fix the home itself; never recurse, because the mount hanging off it belongs to the
+  # host and its ownership is the shared directory's business, not ours.
+  if [ "$(stat -c %U "$AGENT_HOME" 2>/dev/null)" != "$AGENT_USER" ]; then
+    log "Reclaiming $AGENT_HOME for $AGENT_USER (pre-created by the container runtime) ..."
+    sudo chown "$AGENT_USER:$AGENT_USER" "$AGENT_HOME"
+    sudo chmod 0755 "$AGENT_HOME"
+    # useradd skipped skel for the same reason; -n so nothing already there is clobbered.
+    sudo -u "$AGENT_USER" cp -rn /etc/skel/. "$AGENT_HOME/" 2>/dev/null || true
+  fi
 
   if [ -f "$conf_dir/gh-app.pem" ]; then
     log "Moving the app key behind codebox-git ..."
@@ -150,6 +183,46 @@ EOF
   fi
 fi
 
+# --- the shared project directory ----------------------------------------
+# A directory bind-mounted from the host, to be worked in from both sides. Ownership is the
+# whole problem: a bind mount carries uid numbers and nothing else, so "the agent" inside
+# and "me" outside are two different accounts that have to share files.
+#
+# Groups are the usual answer and the wrong one here — they need the human added to a group
+# on the host (sudo, and a re-login), and a matching umask on both sides, which no GUI
+# editor on the host is going to respect. A POSIX *default* ACL is applied by the kernel at
+# creation time and makes the umask irrelevant, so it needs nothing of the host at all.
+#
+# Both uids go in the default entry deliberately. With only the human's, files the human
+# creates come out unwritable by the agent, which fails the first time you edit something
+# and ask the agent to carry on with it.
+if [ -n "$SHARED_DIR" ]; then
+  box_user="${AGENT_USER:-$(id -un)}"
+  box_uid="$(id -u "$box_user")"
+  if [ ! -d "$SHARED_DIR" ]; then
+    log "error: CODEBOX_SHARED_DIR=$SHARED_DIR is not a directory in the box; the mount did not arrive."
+    exit 1
+  fi
+  log "Sharing $SHARED_DIR between $box_user (uid $box_uid) and the host (uid ${SHARED_DIR_PEER_UID:-?}) ..."
+  sudo chown "$box_user" "$SHARED_DIR"
+  sudo chmod 700 "$SHARED_DIR"
+  if [ -n "$SHARED_DIR_PEER_UID" ] && [ "$SHARED_DIR_PEER_UID" != "$box_uid" ]; then
+    # An unsupported filesystem fails here rather than silently leaving a directory only one
+    # side can write — that would look like the feature working until the first handover.
+    # -R so re-running over a directory that already has work in it fixes the existing
+    # files too, not just the ones created from here on.
+    if ! sudo setfacl -R -m "u:${box_uid}:rwx,u:${SHARED_DIR_PEER_UID}:rwx" "$SHARED_DIR" 2>/dev/null ||
+       ! sudo setfacl -R -d -m "u:${box_uid}:rwx,u:${SHARED_DIR_PEER_UID}:rwx" "$SHARED_DIR" 2>/dev/null; then
+      log "error: could not set POSIX ACLs on $SHARED_DIR."
+      log "       The host filesystem holding it has to support them — ext4, xfs and btrfs do;"
+      log "       exFAT, FAT and some network mounts do not. Point CODEBOX_DOCKER_SHARED_DIR"
+      log "       somewhere else, or drop CODEBOX_AGENT_USER so the box and you share one uid."
+      exit 1
+    fi
+    log "Host uid $SHARED_DIR_PEER_UID has read/write in $SHARED_DIR, including on files the agent creates."
+  fi
+fi
+
 # --- the agent's half ----------------------------------------------------
 # Claude Code, the editor config, the GitHub helpers and the clone all live in the agent's
 # home, so they are installed by bootstrap-user.sh running as that user. Without the split
@@ -157,7 +230,7 @@ fi
 user_env=(
   "CODEBOX_REMOTE_PORT=$REMOTE_PORT"
   "CODEBOX_REPO=$REPO"
-  "CODEBOX_PROJECT_DIR=${CODEBOX_PROJECT_DIR:-}"
+  "CODEBOX_PROJECT_DIR=${CODEBOX_PROJECT_DIR:-$SHARED_DIR}"
   "CODEBOX_GITHUB_APP_ID=$GH_APP_ID"
   "CODEBOX_GITHUB_APP_INSTALLATION_ID=$GH_APP_INSTALL_ID"
   "CODEBOX_GITHUB_BOT_NAME=$GH_BOT_NAME"

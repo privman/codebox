@@ -31,11 +31,12 @@ fi
 # Bind mounts are baked in at create time for the same reason, so a CODEBOX_DOCKER_MOUNT
 # that was added or repointed afterwards silently does nothing until the box is recreated.
 want_mount="$(codebox_mount_source)"
+[ -n "$want_mount" ] || want_mount="$(codebox_shared_dir_source)"
 if [ -n "$want_mount" ]; then
   have_mounts="$(docker inspect -f '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' \
                  "$CODEBOX_INSTANCE" 2>/dev/null || true)"
   if ! printf '%s\n' "$have_mounts" | grep -qxF "$want_mount"; then
-    codebox_warn "CODEBOX_DOCKER_MOUNT is set to $want_mount, but the container does not mount it."
+    codebox_warn "a project directory at $want_mount is configured, but the container does not mount it."
     codebox_warn "Mounts are fixed when the container is created. To apply the change:"
     codebox_warn "  codebox destroy && codebox create"
   fi

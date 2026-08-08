@@ -213,34 +213,58 @@ CODEBOX_BOX_cloud_PROVIDER="gcp"
 # codebox --box local connect   /   codebox --box cloud connect
 ```
 
-### Working on a directory you already have
+### Sharing a directory with the agent
 
-Point `CODEBOX_DOCKER_MOUNT` at a directory on this machine and it is bind-mounted into the
-box as the project folder, instead of cloning `CODEBOX_REPO` into it:
+`CODEBOX_DOCKER_SHARED_DIR` is the recommended way to work locally. codebox creates the
+directory, bind-mounts it as the box's project folder, and hands it to the agent — while you
+keep read/write on everything in it:
+
+```bash
+CODEBOX_DOCKER_SHARED_DIR="~/codebox-work"   # -> /home/agent/codebox-work in the box
+CODEBOX_AGENT_USER="agent"                   # the two go together
+```
+
+No clone, no pushing work back and forth, and `codebox destroy` cannot take the contents
+with it. code-server opens it by default, exactly as it would a clone; `CODEBOX_REPO` is not
+cloned when this is set.
+
+**How the sharing works, and why it is not groups.** A bind mount carries uid *numbers* and
+nothing else, so the agent inside the box and you outside it are two different accounts that
+have to share files. The usual answer — a shared unix group — would need you added to a
+group on the host (sudo, and a re-login) *and* a matching umask on both sides, which no GUI
+editor on your machine is going to respect. codebox uses a **POSIX default ACL** instead: the
+kernel applies it when a file is created, the umask is ignored entirely, and nothing about
+your host account has to change. Both uids go into the entry, so the agent can edit files you
+create and you can edit files it creates. The agent's uid is pinned (`CODEBOX_AGENT_UID`,
+default 2000) so it still matches after the box is rebuilt.
+
+Requires a filesystem with POSIX ACLs. ext4, xfs and btrfs are fine; exFAT, FAT and some
+network mounts are not, and bootstrap **fails** there rather than leaving you a directory
+only one side can write. On macOS, Docker Desktop virtualises ownership across the mount, so
+the ACL layer is inert and sharing works regardless.
+
+**A shared directory is a hole in the blast radius.** The reason a box is safe to run an
+agent in without approvals is that it can only reach what you gave it. This directory is real
+files on your real machine, and `--dangerously-skip-permissions` applies to them. It is much
+narrower than mounting an existing project — the worst case is losing work in a directory
+made for exactly this — but share a working directory, not your home.
+
+### Mounting a directory you already have
+
+`CODEBOX_DOCKER_MOUNT` bind-mounts an existing directory **as-is**, keeping your ownership:
 
 ```bash
 CODEBOX_DOCKER_MOUNT="~/src/my-project"    # -> /home/coder/my-project in the box
 ```
 
-The box and your own editor are then looking at the same files — no clone, no pushing to
-move work across, and `codebox destroy` cannot take the project with it. code-server opens
-it by default, exactly as it would a clone. Setting this means `CODEBOX_REPO` is *not*
-cloned; `bootstrap` says so if both are set.
+Because it keeps your uid, it only works when the box runs under a single uid — with
+`CODEBOX_AGENT_USER` set, the agent is a separate account and cannot write to it, and
+`create` warns. Reach for `CODEBOX_DOCKER_SHARED_DIR` instead in that case. Setting both is
+an error.
 
-The box user is built with your uid (`CODEBOX_DOCKER_UID`, defaulting to `id -u`) so files
-written from either side belong to the same person. Two caveats:
-
-- **Not compatible with `CODEBOX_AGENT_USER`.** The uid split gives the agent its own
-  account inside the box, which is *not* the uid the mount belongs to, so the agent could
-  not write to the project. `create` warns when both are set. Pick one: an isolated agent
-  uid, or a shared working directory.
-- **A mount is a hole in the blast radius.** The point of a box is that an agent running
-  without approvals can only reach what you gave it. A mounted directory is real files on
-  your real machine, and `--dangerously-skip-permissions` applies to them too. Mount the
-  project, not your home directory.
-
-Mounts are fixed when the container is created, like published ports — `connect` warns when
-the config and the container have drifted, and applying a change means `destroy && create`.
+Either way the mount is fixed when the container is created, like published ports —
+`connect` warns when the config and the container have drifted, and applying a change means
+`destroy && create`.
 
 **How it differs from the GCP provider:**
 

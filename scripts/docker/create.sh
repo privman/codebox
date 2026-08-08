@@ -8,6 +8,7 @@ codebox_check_docker
 codebox_validate_repo
 codebox_validate_github
 codebox_validate_agent_user
+codebox_validate_project_dir
 codebox_check_mount_agent_split
 
 state="$(codebox_container_state)"
@@ -36,11 +37,14 @@ while IFS= read -r spec; do
 done <<< "$(codebox_publish_args)"
 
 # A bind mount is fixed at create time for the same reason ports are, so `connect` checks
-# it against the config too and says when they have drifted.
+# it against the config too and says when they have drifted. Either setting produces one;
+# what differs is who ends up owning the contents, which bootstrap.sh sorts out from inside.
 mount_args=()
 mount_src="$(codebox_mount_source)"
+[ -n "$mount_src" ] || mount_src="$(codebox_shared_dir_source)"
 if [ -n "$mount_src" ]; then
   mount_target="$(codebox_mount_target)"
+  [ -n "$mount_target" ] || mount_target="$(codebox_shared_dir_target)"
   codebox_info "Mounting $mount_src at $mount_target ..."
   mount_args=(-v "$mount_src:$mount_target")
 fi

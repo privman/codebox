@@ -8,8 +8,11 @@ Context for Claude Code when working in this repo.
 a laptop, running code-server (browser VS Code) and Claude Code. It is not an application —
 it's operational tooling. Two providers: `docker` (a container on the machine you are
 sitting at — the default) and `gcp` (a cloud VM behind an IAP tunnel). The docker provider
-can bind-mount a host directory as the project folder (`CODEBOX_DOCKER_MOUNT`) instead of
-cloning into the box. See `README.md` for the full model.
+can put the project folder on a host directory instead of cloning into the box:
+`CODEBOX_DOCKER_SHARED_DIR` (codebox creates it, the agent owns it, you get read/write via a
+POSIX default ACL — this is the one that works under the uid split) or
+`CODEBOX_DOCKER_MOUNT` (adopt an existing directory as-is, single uid only). See `README.md`
+for the full model.
 
 ## Layout
 
