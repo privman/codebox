@@ -36,11 +36,17 @@ OWN_PGID="$(ps -o pgid= -p $$ 2>/dev/null | tr -d '[:space:]')"
 # channel would keep the box awake. `-F` waits for a file that does not exist yet, so
 # this is silently harmless against a VM whose bootstrap predates the notice.
 NOTICE_MARKER="CODEBOX-SUSPENDING"
+# The VM's download watcher (vm/sync-watch.sh) announces on the same channel. It only
+# ever speaks when the directory changes, so the connection stays as quiet as it was.
+SYNC_MARKER="CODEBOX-SYNC-DOWNLOAD"
 NOTICE_COMMAND="tail -n 0 -F /run/codebox/notices 2>/dev/null"
 NOTICE_OUT="$(mktemp "${TMPDIR:-/tmp}/codebox-notice.XXXXXX")"
+SYNC_SEEN=0          # announcements already acted on
+SYNC_UPLOAD_PRINT="" # fingerprint of the local upload directory
 
 codebox_check_gcloud
 codebox_require_project
+codebox_check_rsync
 
 # --- tunnel process -------------------------------------------------------
 codebox_kill_tunnel() {
@@ -65,6 +71,33 @@ trap 'codebox_kill_tunnel; codebox_info "Disconnected."; exit 0' INT TERM
 # Did the VM tell us it is about to suspend?
 codebox_suspend_announced() {
   grep -q "$NOTICE_MARKER" "$NOTICE_OUT" 2>/dev/null
+}
+
+# --- file transfer --------------------------------------------------------
+# Both halves are driven from the supervise loop, which already runs here every couple of
+# seconds to watch the tunnel. Neither costs anything on the wire until something moves:
+# the pull waits for the VM to announce a change on the channel we are already reading,
+# and the push compares a fingerprint of a local directory. That matters more than it
+# looks — idle detection on the VM measures port 22, so a sync that polled over ssh would
+# quietly stop the box ever suspending, which is most of what it costs to run.
+codebox_sync_download_announced() {
+  local count
+  count="$(grep -c "$SYNC_MARKER" "$NOTICE_OUT" 2>/dev/null || printf 0)"
+  [ "$count" -gt "$SYNC_SEEN" ] || return 1
+  SYNC_SEEN="$count"
+  return 0
+}
+
+codebox_sync_run() {
+  local direction="$1"
+  case "$direction" in
+    down)
+      codebox_info "Box changed download/ — pulling ..."
+      codebox_sync_pull || codebox_warn "pulling download/ failed; will retry on the next change." ;;
+    up)
+      codebox_info "upload/ changed — pushing to the box ..."
+      codebox_sync_push || codebox_warn "pushing upload/ failed; will retry on the next change." ;;
+  esac
 }
 
 codebox_start_tunnel() {
@@ -138,6 +171,15 @@ codebox_supervise() {
       TUNNEL_ENDED_BY="config-changed"
       codebox_kill_tunnel
       return 0
+    fi
+    if [ -n "${CODEBOX_SYNC_DIR:-}" ]; then
+      codebox_sync_download_announced && codebox_sync_run down
+      current_print="$(codebox_sync_upload_fingerprint)"
+      if [ "$current_print" != "$SYNC_UPLOAD_PRINT" ]; then
+        # Skip the very first comparison: it is the baseline, not a change.
+        [ -n "$SYNC_UPLOAD_PRINT" ] && codebox_sync_run up
+        SYNC_UPLOAD_PRINT="$current_print"
+      fi
     fi
     sleep "$WATCH_INTERVAL" || :
   done
@@ -247,6 +289,13 @@ EOF
   [ -n "$extra_desc" ] && codebox_info "Also forwarding port(s):${extra_desc} (same port locally and on the VM)."
 
   codebox_start_tunnel
+  # Pull once on connect: the box may have produced something while we were away, and
+  # nothing announced it because nobody was listening.
+  if [ -n "${CODEBOX_SYNC_DIR:-}" ]; then
+    SYNC_SEEN=0
+    SYNC_UPLOAD_PRINT="$(codebox_sync_upload_fingerprint)"
+    codebox_sync_run down
+  fi
   codebox_supervise "$(codebox_config_fingerprint)"
 
   case "$TUNNEL_ENDED_BY" in

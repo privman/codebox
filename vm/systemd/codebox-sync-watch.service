@@ -1,0 +1,14 @@
+[Unit]
+Description=codebox download-directory watcher
+After=local-fs.target
+
+[Service]
+# The directory is written in by bootstrap; %i is not used because the path can contain
+# characters systemd would have to escape, so it is baked in as an EnvironmentFile value.
+EnvironmentFile=/etc/codebox/sync.env
+ExecStart=/usr/local/bin/codebox-sync-watch ${CODEBOX_SYNC_DOWNLOAD_DIR}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

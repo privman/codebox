@@ -178,6 +178,50 @@ handshake rather than a connection dying mid-flight — see
 tunnel whenever you save a change — that's how a
 [`CODEBOX_ADDITIONAL_PORTS`](#accessing-a-dev-server-running-in-the-box) edit takes effect.
 
+## Moving files to and from a cloud box
+
+The docker provider shares a directory outright. Over an IAP tunnel that is not on the
+table, so the gcp provider keeps two **one-way** directories instead, named for the
+direction as seen from your laptop:
+
+```bash
+CODEBOX_SYNC_DIR="~/codebox-sync"
+```
+
+| | the agent writes | you get it |
+| --- | --- | --- |
+| `~/codebox-sync/download/` | `~/codebox-sync/download/` in the box | mirrored down to your laptop |
+| `~/codebox-sync/upload/` | you write it on the laptop | mirrored up into the box |
+
+One-way each is deliberate. A directory written from both ends across a network needs
+conflict resolution, and two one-way directories have none to need — which is why this is
+the right shape rather than a lesser one.
+
+Both halves run for the life of a `codebox connect` session and **cost nothing on the wire
+until something actually moves**:
+
+- **Down:** a watcher in the box (`inotify`, not a poll) announces a change on
+  `/run/codebox/notices` — the channel `connect` is already tailing for suspend warnings —
+  and the client pulls. A burst of a thousand files is coalesced into one announcement.
+- **Up:** the client fingerprints your local `upload/` directory every couple of seconds.
+  That is a local `find`, so it never touches the network until you drop something in.
+
+**Why that matters more than bandwidth.** Idle detection on the VM measures traffic on port
+22. Anything that polled over SSH would keep the box permanently awake — and a permanently
+awake `e2-standard-4` is roughly $100/month against maybe $5–10 suspended. The event-driven
+design is a cost decision before it is an elegance one; it is also why codebox does **not**
+offer an sshfs mount, which would chatter constantly and defeat auto-suspend outright.
+
+Transfers are `rsync` (so they are incremental, and `--delete` keeps the two ends honest)
+carried over `gcloud compute start-iap-tunnel`, the same IAP path as everything else —
+nothing is exposed to the network. Needs `rsync` on your laptop.
+
+**The limitation:** nothing syncs while the box is suspended. Whatever the agent left in
+`download/` arrives when you next connect, which resumes the box anyway. If you want to
+collect results *without* resuming, that wants a GCS bucket in the middle instead — a few
+cents a month, but it costs a bucket, IAM for the VM's service account, and another copy of
+your data in cloud storage. Worth adding only if that case turns out to matter.
+
 ## Running locally in Docker
 
 The default. Same box, same tooling, no cloud account: `create` builds an image, runs a
@@ -391,6 +435,9 @@ The first of these that exists wins:
 | `CODEBOX_GIT_AGENT_NAME`  | *(from the app)* | Author/committer name for Claude Code's commits     |
 | `CODEBOX_GIT_AGENT_EMAIL` | *(from the app)* | Author/committer email for Claude Code's commits    |
 | `CODEBOX_PROVIDER`        | `docker`         | Where the box lives: `docker` or `gcp`. `--provider` overrides it |
+| `CODEBOX_SYNC_DIR`        | *(empty)*        | gcp: local directory holding `download/` and `upload/`, synced while connected |
+| `CODEBOX_SYNC_REMOTE_DIR` | `~/codebox-sync` | gcp: where that pair lives in the box |
+| `CODEBOX_AGENT_UID`       | *(useradd's pick)* | uid the agent account is created with; pinned so it survives a rebuild |
 | `CODEBOX_DOCKER_IMAGE`    | `codebox:local`  | docker: image tag built by `create`                 |
 | `CODEBOX_DOCKER_USER`     | `coder`          | docker: login user inside the container             |
 | `CODEBOX_DOCKER_BIND`     | `127.0.0.1`      | docker: host interface ports are published on       |

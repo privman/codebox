@@ -21,6 +21,101 @@ CODEBOX_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # IAP's TCP-forwarding source range. Fixed by Google.
 CODEBOX_IAP_RANGE="35.235.240.0/20"
 
+# --- moving files between the box and here -------------------------------
+# Two one-way directories rather than one shared one. Over a network link a directory
+# written from both ends needs conflict resolution, and one-way-each has none to have:
+# the agent writes download/ and it lands here, you write upload/ and it lands there.
+# Directions are named from this machine's point of view, on both sides.
+: "${CODEBOX_SYNC_REMOTE_DIR:=}"
+
+# Where the pair lives in the box. The agent's home when the uid split is on, because the
+# agent is the only thing in there that reads or writes them.
+codebox_sync_remote_dir() {
+  [ -n "${CODEBOX_SYNC_DIR:-}" ] || return 0
+  if [ -n "${CODEBOX_SYNC_REMOTE_DIR:-}" ]; then
+    printf '%s' "$CODEBOX_SYNC_REMOTE_DIR"
+  elif [ -n "${CODEBOX_AGENT_USER:-}" ]; then
+    printf '/home/%s/codebox-sync' "$CODEBOX_AGENT_USER"
+  else
+    printf '~/codebox-sync'
+  fi
+}
+
+# Absolute path of the local half, created if missing.
+codebox_sync_local_dir() {
+  local path="${CODEBOX_SYNC_DIR:-}"
+  [ -n "$path" ] || return 0
+  case "$path" in
+    "~")   path="$HOME" ;;
+    "~/"*) path="$HOME/${path#\~/}" ;;
+  esac
+  case "$path" in
+    /*) ;;
+    *)  path="$PWD/$path" ;;
+  esac
+  mkdir -p "$path/download" "$path/upload" || \
+    codebox_die "could not create the sync directories under $path"
+  printf '%s' "$path"
+}
+
+# rsync's transport. `start-iap-tunnel --listen-on-stdin` is built to be a ProxyCommand,
+# which is what lets plain ssh — and so rsync — reach a VM that has no public address.
+# A fresh tunnel per invocation costs a second or two; the alternative is holding a
+# ControlMaster open, which would put a second long-lived connection on port 22 and
+# muddy the traffic measurement the idle timer depends on.
+codebox_sync_rsh() {
+  printf 'ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ProxyCommand=%s' \
+    "'gcloud compute start-iap-tunnel $CODEBOX_INSTANCE %p --listen-on-stdin --project=$CODEBOX_PROJECT --zone=$CODEBOX_ZONE'"
+}
+
+# The login name gcloud uses on the VM. `gcloud compute ssh` derives it from the active
+# account; asking it directly avoids guessing wrong for a service account.
+codebox_sync_remote_user() {
+  local account
+  account="$(gcloud config get-value account 2>/dev/null || true)"
+  [ -n "$account" ] || { printf '%s' "${USER:-}"; return 0; }
+  # Same transformation gcloud applies: local part, non-alphanumerics to underscores.
+  printf '%s' "${account%%@*}" | tr -c 'a-zA-Z0-9_-' '_'
+}
+
+# Pull the box's download/ into ours. --delete so a file removed in the box goes away
+# here too; without it the directory only ever grows and stops reflecting the box.
+codebox_sync_pull() {
+  local local_dir remote_dir
+  local_dir="$(codebox_sync_local_dir)" || return 1
+  [ -n "$local_dir" ] || return 0
+  remote_dir="$(codebox_sync_remote_dir)"
+  rsync -rlptz --delete -e "$(codebox_sync_rsh)" \
+    "$(codebox_sync_remote_user)@$CODEBOX_INSTANCE:$remote_dir/download/" \
+    "$local_dir/download/"
+}
+
+# Push our upload/ into the box's.
+codebox_sync_push() {
+  local local_dir remote_dir
+  local_dir="$(codebox_sync_local_dir)" || return 1
+  [ -n "$local_dir" ] || return 0
+  remote_dir="$(codebox_sync_remote_dir)"
+  rsync -rlptz --delete -e "$(codebox_sync_rsh)" \
+    "$local_dir/upload/" \
+    "$(codebox_sync_remote_user)@$CODEBOX_INSTANCE:$remote_dir/upload/"
+}
+
+# Cheap local fingerprint of the upload directory, so `connect` can notice you dropped
+# something in without going near the network.
+codebox_sync_upload_fingerprint() {
+  local local_dir
+  local_dir="$(codebox_sync_local_dir)" || return 0
+  [ -n "$local_dir" ] || return 0
+  find "$local_dir/upload" -type f -exec ls -ld {} + 2>/dev/null | cksum
+}
+
+codebox_check_rsync() {
+  [ -n "${CODEBOX_SYNC_DIR:-}" ] || return 0
+  command -v rsync >/dev/null 2>&1 || \
+    codebox_die "CODEBOX_SYNC_DIR is set but rsync is not installed; the file-transfer directories need it."
+}
+
 codebox_check_gcloud() {
   command -v gcloud >/dev/null 2>&1 || \
     codebox_die "gcloud CLI not found. Install the Google Cloud SDK: https://cloud.google.com/sdk/docs/install"

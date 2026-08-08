@@ -11,6 +11,7 @@ codebox_validate_repo
 codebox_validate_github
 codebox_validate_agent_user
 codebox_validate_agent_policy
+codebox_check_rsync
 
 status="$(codebox_instance_status)"
 [ -n "$status" ] || codebox_die "instance '$CODEBOX_INSTANCE' not found. Run 'codebox create' first."
@@ -64,6 +65,8 @@ CODEBOX_GITHUB_APP_INSTALLATION_ID='${CODEBOX_GITHUB_APP_INSTALLATION_ID}' \
 CODEBOX_GITHUB_BOT_NAME='${CODEBOX_GITHUB_BOT_NAME}' \
 CODEBOX_GITHUB_WRITE_REPOS='${CODEBOX_GITHUB_WRITE_REPOS}' \
 CODEBOX_AGENT_USER='${CODEBOX_AGENT_USER}' \
+CODEBOX_AGENT_UID='${CODEBOX_AGENT_UID}' \
+CODEBOX_SYNC_REMOTE_DIR='$(codebox_sync_remote_dir)' \
 CODEBOX_AGENT_PERMISSION_MODE='${CODEBOX_AGENT_PERMISSION_MODE}' \
 CODEBOX_AGENT_DENY_TOOLS='${CODEBOX_AGENT_DENY_TOOLS}' \
 CODEBOX_AGENT_ALLOW_TOOLS='${CODEBOX_AGENT_ALLOW_TOOLS}' \

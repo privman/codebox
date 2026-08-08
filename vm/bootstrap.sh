@@ -29,6 +29,10 @@ SPLIT=0
 # read/write through a POSIX ACL.
 SHARED_DIR="${CODEBOX_SHARED_DIR:-}"
 SHARED_DIR_PEER_UID="${CODEBOX_SHARED_DIR_PEER_UID:-}"
+# Two one-way directories for moving files between the box and the laptop, named for the
+# direction as seen from the laptop: the agent writes into download/ and it comes down,
+# you write into upload/ and it goes up. Empty turns the whole thing off.
+SYNC_DIR="${CODEBOX_SYNC_REMOTE_DIR:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { printf '\033[1;32m[codebox]\033[0m %s\n' "$*"; }
@@ -220,6 +224,42 @@ if [ -n "$SHARED_DIR" ]; then
       exit 1
     fi
     log "Host uid $SHARED_DIR_PEER_UID has read/write in $SHARED_DIR, including on files the agent creates."
+  fi
+fi
+
+# --- the file-transfer directories ---------------------------------------
+# download/ and upload/ belong to whoever runs the agent, since the agent is the only
+# thing in the box that reads and writes them. The client copies into and out of them
+# over the same IAP tunnel it already holds, so nothing here is exposed to the network.
+if [ -n "$SYNC_DIR" ]; then
+  sync_user="${AGENT_USER:-$(id -un)}"
+  # The client sends this as a plain string, so a leading ~ arrives literally — expanding
+  # it here rather than letting `install -d` create a directory actually called '~'.
+  case "$SYNC_DIR" in
+    "~")   SYNC_DIR="$(getent passwd "$sync_user" | cut -d: -f6)" ;;
+    "~/"*) SYNC_DIR="$(getent passwd "$sync_user" | cut -d: -f6)/${SYNC_DIR#\~/}" ;;
+  esac
+  log "Setting up the file-transfer directories under $SYNC_DIR ..."
+  sudo install -d -m 0755 -o "$sync_user" -g "$sync_user" "$SYNC_DIR"
+  sudo install -d -m 0755 -o "$sync_user" -g "$sync_user" "$SYNC_DIR/download"
+  sudo install -d -m 0755 -o "$sync_user" -g "$sync_user" "$SYNC_DIR/upload"
+
+  if in_container; then
+    # No systemd, and no tunnel to announce over: the docker provider shares a directory
+    # outright (CODEBOX_DOCKER_SHARED_DIR) rather than copying files across a network.
+    log "Container: skipping the download watcher (nothing to announce to)."
+  else
+    sudo apt-get install -y inotify-tools
+    sudo install -d -m 0755 /etc/codebox
+    printf 'CODEBOX_SYNC_DOWNLOAD_DIR=%s\n' "$SYNC_DIR/download" \
+      | sudo tee /etc/codebox/sync.env >/dev/null
+    sudo chmod 0644 /etc/codebox/sync.env
+    sudo install -m 0755 "$HERE/sync-watch.sh" /usr/local/bin/codebox-sync-watch
+    sudo install -m 0644 "$HERE/systemd/codebox-sync-watch.service" \
+      /etc/systemd/system/codebox-sync-watch.service
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now codebox-sync-watch.service
+    log "Watching $SYNC_DIR/download; connected clients are told when it changes."
   fi
 fi
 

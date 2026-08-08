@@ -50,6 +50,12 @@ for the full model.
   `connect` reads it through a `tail -F` carried on the tunnel's own SSH session. Anything
   added to that channel has to stay silent when idle — traffic on port 22 is what the idle
   timer measures, so a chatty channel would stop the box ever suspending.
+- `CODEBOX_SYNC_DIR` (gcp only) keeps two one-way directories — `download/` out of the box,
+  `upload/` into it, directions named from the laptop. It rides that same notices channel:
+  `vm/sync-watch.sh` announces download changes over inotify, and the upload half
+  fingerprints a *local* directory, so neither side polls over ssh. That is a hard
+  constraint, not a preference — polling would defeat auto-suspend and the box would bill
+  around the clock. It is also why there is no sshfs option.
 - `VERSION` / `packaging/` / `Formula/` / `.github/workflows/release.yml` — the release
   process. Bumping `VERSION` on `main` is what publishes a release; see the Releasing
   section of `README.md`. Anything a user needs at runtime must be listed in
