@@ -434,6 +434,7 @@ The first of these that exists wins:
 | `CODEBOX_CLAUDE_MARKETPLACES` | *(empty)*    | Comma-separated plugin marketplaces to add in every box |
 | `CODEBOX_CLAUDE_PLUGINS`  | *(empty)*        | Comma-separated `plugin@marketplace` to install in every box |
 | `CODEBOX_CODE_EXTENSIONS` | *(empty)*        | Comma-separated VS Code extension ids to install into code-server |
+| `CODEBOX_CODE_SETTINGS`   | *(empty)*        | JSON object of VS Code settings merged into code-server's `settings.json`; keys named here win |
 | `CODEBOX_AGENT_PERMISSION_MODE` | *(empty)* | `bypassPermissions`, `dontAsk`, … written into the box's Claude settings |
 | `CODEBOX_AGENT_DENY_TOOLS` | *(empty)*       | Comma-separated tools the agent may never call, enforced in every mode |
 | `CODEBOX_AGENT_ALLOW_TOOLS` | *(empty)*      | Comma-separated allowlist; required with `dontAsk` |
@@ -861,7 +862,10 @@ codebox ssh -- -N -L 8000:localhost:8000
   running as a systemd service. Seeded with `window.autoDetectColorScheme: true` so the
   editor follows your OS light/dark preference, and a `window.title` that puts the project
   name before the file name so browser tabs stay identifiable (override either in settings —
-  bootstrap never overwrites a value you've already set).
+  bootstrap never overwrites a value you've already set). `CODEBOX_CODE_SETTINGS` is the one
+  exception, and deliberately so: a JSON object there is a declaration, and the keys it names
+  win over both these defaults and the on-box file, so that changing one and re-bootstrapping
+  actually does something. Keys it does not name stay yours.
 - **git, GitHub CLI (`gh`), ripgrep, jq, tmux, build-essential, openssh-client**
 - **VS Code extensions** listed in `CODEBOX_CODE_EXTENSIONS`, resolved against Open VSX —
   which is where code-server looks, so Microsoft-only extensions are not available by id

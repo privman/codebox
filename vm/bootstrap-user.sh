@@ -18,6 +18,7 @@ GH_WRITE_REPOS="${CODEBOX_GITHUB_WRITE_REPOS:-}"
 SPLIT="${CODEBOX_AGENT_SPLIT:-0}"
 MARKETPLACES="${CODEBOX_CLAUDE_MARKETPLACES:-}"
 EXTENSIONS="${CODEBOX_CODE_EXTENSIONS:-}"
+CODE_SETTINGS="${CODEBOX_CODE_SETTINGS:-}"
 PLUGINS="${CODEBOX_CLAUDE_PLUGINS:-}"
 PERMISSION_MODE="${CODEBOX_AGENT_PERMISSION_MODE:-}"
 DENY_TOOLS="${CODEBOX_AGENT_DENY_TOOLS:-}"
@@ -102,13 +103,23 @@ codebox_settings='{
   "window.autoDetectColorScheme": true,
   "window.title": "${rootName}${separator}${dirty}${activeEditorShort}${separator}${appName}"
 }'
+# CODEBOX_CODE_SETTINGS wins over both our defaults and the on-box file. It is a deliberate
+# declaration rather than a seeded default, and a config value that silently lost to a stale
+# file would make editing codebox.env look broken — the first thing you would do is change a
+# value, re-bootstrap, and see nothing happen. The non-clobber rule still holds for every key
+# codebox.env does *not* name: those stay yours to change in the editor.
+user_settings='{}'
+[ -z "$CODE_SETTINGS" ] || user_settings="$CODE_SETTINGS"
 tmp="$(mktemp)"
-if jq --argjson defaults "$codebox_settings" '$defaults * .' \
-     "$settings" > "$tmp" 2>/dev/null; then
+if jq --argjson defaults "$codebox_settings" --argjson user "$user_settings" \
+     '$defaults * . * $user' "$settings" > "$tmp" 2>/dev/null; then
   mv "$tmp" "$settings"
+  if [ -n "$CODE_SETTINGS" ]; then
+    log "  from codebox.env: $(printf '%s' "$CODE_SETTINGS" | jq -r 'keys | join(", ")')"
+  fi
 else
   rm -f "$tmp"
-  log "warning: could not parse $settings; leaving it untouched."
+  log "warning: could not parse $settings or CODEBOX_CODE_SETTINGS; leaving it untouched."
 fi
 
 # --- editor extensions ---------------------------------------------------

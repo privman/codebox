@@ -106,6 +106,7 @@ _codebox_apply_box
 : "${CODEBOX_CLAUDE_MARKETPLACES:=}"
 : "${CODEBOX_CLAUDE_PLUGINS:=}"
 : "${CODEBOX_CODE_EXTENSIONS:=}"
+: "${CODEBOX_CODE_SETTINGS:=}"
 : "${CODEBOX_AGENT_PERMISSION_MODE:=}"
 : "${CODEBOX_AGENT_DENY_TOOLS:=}"
 : "${CODEBOX_AGENT_ALLOW_TOOLS:=}"
@@ -198,6 +199,23 @@ codebox_validate_agent_policy() {
       *[\'\"\\]*) codebox_die "CODEBOX_CLAUDE_MARKETPLACES / _PLUGINS / CODEBOX_CODE_EXTENSIONS cannot contain quotes or backslashes; got '$item'." ;;
     esac
   done
+
+  # Editor settings are JSON, so unlike the lists above they *must* carry double quotes and
+  # may legitimately carry backslashes (a JSON escape survives the remote command intact,
+  # since a backslash inside single quotes is literal). Only an apostrophe is fatal: it ends
+  # the single-quoted remote command and corrupts everything after it.
+  if [ -n "${CODEBOX_CODE_SETTINGS:-}" ]; then
+    case "$CODEBOX_CODE_SETTINGS" in
+      *\'*) codebox_die "CODEBOX_CODE_SETTINGS cannot contain an apostrophe; it reaches the box inside a single-quoted command. Use a different setting or set it in the editor." ;;
+    esac
+    # Guarded on jq because the laptop is not required to have it — only the box is. A
+    # malformed object would otherwise surface as a silently skipped merge after bootstrap
+    # has already run, which is the slowest possible way to find a typo.
+    if command -v jq >/dev/null 2>&1 &&
+       ! printf '%s' "$CODEBOX_CODE_SETTINGS" | jq -e 'type == "object"' >/dev/null 2>&1; then
+      codebox_die "CODEBOX_CODE_SETTINGS must be a single JSON object, e.g. '{\"editor.fontSize\": 13}'; got: $CODEBOX_CODE_SETTINGS"
+    fi
+  fi
 
   # An ssh marketplace with no key is the misconfiguration that produces a box whose skills
   # silently never sync, which is exactly what this feature exists to avoid.
