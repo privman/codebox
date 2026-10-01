@@ -61,7 +61,7 @@ codebox_gcloud compute instances create "$CODEBOX_INSTANCE" \
   --image-family="$CODEBOX_IMAGE_FAMILY" \
   --image-project="$CODEBOX_IMAGE_PROJECT" \
   --boot-disk-size="${CODEBOX_DISK_SIZE}GB" \
-  --boot-disk-type=pd-balanced \
+  --boot-disk-type="$CODEBOX_DISK_TYPE" \
   --tags="$CODEBOX_NETWORK_TAG" \
   --scopes=https://www.googleapis.com/auth/compute \
   --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring

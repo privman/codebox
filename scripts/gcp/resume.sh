@@ -13,7 +13,7 @@ case "$status" in
   "")          codebox_die "instance '$CODEBOX_INSTANCE' not found. Run 'codebox create' first." ;;
   RUNNING)     codebox_info "Instance is already running." ;;
   SUSPENDED)   codebox_info "Resuming instance (restoring running processes) ..."
-               codebox_gcloud compute instances resume "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" ;;
+               codebox_power_on resume ;;
   *)           codebox_info "Instance is '$status', not suspended; starting it fresh ..."
-               codebox_gcloud compute instances start "$CODEBOX_INSTANCE" --zone "$CODEBOX_ZONE" ;;
+               codebox_power_on start ;;
 esac

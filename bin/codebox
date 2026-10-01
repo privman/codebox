@@ -63,6 +63,8 @@ Commands:
   suspend    Suspend the VM (freeze RAM; preserves running processes, cheaper than running)
   resume     Resume a suspended VM (restores running processes)
   status     Show instance status
+  capacity   Probe which machine types a zone can actually supply right now, by
+             creating and deleting a throwaway VM per candidate (gcp only)
   bootstrap  Re-run the tooling install on an existing VM
   destroy    Delete the VM (and optionally the firewall rules)
   version    Print the codebox version
@@ -131,7 +133,7 @@ PROVIDER_DIR="$ROOT/scripts/$provider"
 [ -d "$PROVIDER_DIR" ] || { echo "codebox: no scripts found for provider '$provider'" >&2; exit 1; }
 
 case "$cmd" in
-  create|bootstrap|start|stop|suspend|resume|ssh|status|destroy)
+  create|bootstrap|start|stop|suspend|resume|ssh|status|destroy|capacity)
     exec bash "$PROVIDER_DIR/$cmd.sh" "$@" ;;
   connect|code)
     exec bash "$PROVIDER_DIR/connect.sh" "$@" ;;
